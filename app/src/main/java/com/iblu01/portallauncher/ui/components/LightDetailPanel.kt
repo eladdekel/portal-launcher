@@ -1,0 +1,802 @@
+package com.iblu01.portallauncher.ui.components
+
+import android.content.res.Configuration
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.NightsStay
+import androidx.compose.material.icons.filled.Palette
+import androidx.compose.material.icons.filled.PowerSettingsNew
+import androidx.compose.material.icons.filled.WbSunny
+import androidx.compose.material.icons.outlined.PowerSettingsNew
+import androidx.compose.material3.Icon
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import com.iblu01.portallauncher.domain.model.PillDetail
+import com.iblu01.portallauncher.LauncherChip
+import com.iblu01.portallauncher.ui.CallService
+import com.iblu01.portallauncher.ui.LocalAreas
+import com.iblu01.portallauncher.ui.LocalCallService
+import com.iblu01.portallauncher.ui.LocalHaStates
+import com.iblu01.portallauncher.ui.components.controls.kelvinToColor
+import com.iblu01.portallauncher.ui.components.controls.VerticalColorTempSlider
+import com.iblu01.portallauncher.ui.components.controls.VerticalFillSlider
+import com.iblu01.portallauncher.ui.theme.AppleColors
+import com.iblu01.portallauncher.ui.theme.AppleMotion
+import com.iblu01.portallauncher.ui.theme.AppleShapes
+import com.iblu01.portallauncher.ui.theme.AppleTypography
+import kotlinx.coroutines.delay
+import kotlin.math.PI
+import kotlin.math.atan2
+import kotlin.math.cos
+import kotlin.math.max
+import kotlin.math.min
+import kotlin.math.roundToInt
+import kotlin.math.sin
+import kotlin.math.sqrt
+
+private val colorPresets = listOf(
+    Triple(255, 59, 48), Triple(255, 149, 0), Triple(255, 204, 0), Triple(52, 199, 89),
+    Triple(0, 199, 190), Triple(0, 122, 255), Triple(175, 82, 222), Triple(255, 45, 85),
+)
+
+private val whitePresets = listOf(
+    2200 to Color(0xFFFFB46B), 2700 to Color(0xFFFFD1A3),
+    4000 to Color(0xFFFFEBD2), 6500 to Color(0xFFEFF4FF),
+)
+
+private val colorModes = setOf("hs", "rgb", "xy", "rgbw", "rgbww")
+
+private enum class LightSliderMode { BRIGHTNESS, COLOR_TEMPERATURE }
+
+@Composable
+fun LightDetailContent(detail: PillDetail, onBack: () -> Unit) {
+    val callService = LocalCallService.current
+    val entity = LocalHaStates.current[detail.entityId]
+    val attrs = entity?.attributes
+    val isOn = entity?.state?.equals("on", true) ?: detail.active
+    val modes = attrs?.optJSONArray("supported_color_modes")
+        ?.let { array -> List(array.length()) { array.optString(it).lowercase() } }
+        .orEmpty()
+    val supportsColor = modes.any { it in colorModes }
+    val supportsWhite = "color_temp" in modes
+    val supportsBrightness = modes.isEmpty() || modes.any { it != "onoff" }
+    val isWhiteChannelLight = modes.any { it == "rgbw" || it == "rgbww" }
+    val onOffOnly = modes.isNotEmpty() && modes.all { it == "onoff" }
+    val minKelvin = attrs?.optInt("min_color_temp_kelvin", 2000)?.coerceAtLeast(1000) ?: 2000
+    val maxKelvin = max(minKelvin + 1, attrs?.optInt("max_color_temp_kelvin", 6500) ?: 6500)
+    val initialKelvin = (attrs?.optInt("color_temp_kelvin", 4000) ?: 4000).coerceIn(minKelvin, maxKelvin)
+    val rgbColor = attrs?.optJSONArray("rgb_color")?.let { array ->
+        if (array.length() >= 3) Color(array.optInt(0), array.optInt(1), array.optInt(2)) else null
+    }
+    val hs = attrs?.optJSONArray("hs_color")
+    val initialHsv = when {
+        hs != null && hs.length() >= 2 -> Triple(hs.optDouble(0).toFloat(), hs.optDouble(1).toFloat() / 100f, 1f)
+        rgbColor != null -> colorToHsv(rgbColor)
+        else -> Triple(0f, 0f, 1f)
+    }
+    var brightness by remember(detail.entityId) {
+        mutableFloatStateOf(if (!isOn) 0f else ((attrs?.optInt("brightness", 255) ?: 255) / 255f).coerceIn(0.04f, 1f))
+    }
+    var kelvin by remember(detail.entityId) { mutableIntStateOf(initialKelvin) }
+    var selectedHsv by remember(detail.entityId) { mutableStateOf(initialHsv) }
+    var selectedColor by remember(detail.entityId) {
+        mutableStateOf(rgbColor ?: if (supportsWhite) kelvinToColor(initialKelvin) else Color.White)
+    }
+    var lightOn by remember(detail.entityId) { mutableStateOf(isOn) }
+    var sliderMode by remember(detail.entityId) {
+        mutableStateOf(if (supportsBrightness) LightSliderMode.BRIGHTNESS else LightSliderMode.COLOR_TEMPERATURE)
+    }
+    var wheelVisible by remember { mutableStateOf(false) }
+    var entered by remember { mutableStateOf(false) }
+    val deviceLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+
+    LaunchedEffect(Unit) { entered = true }
+    AnimatedVisibility(
+        visible = entered,
+        enter = fadeIn(tween(AppleMotion.FADE_DURATION)) +
+            slideInVertically(tween(AppleMotion.SLIDE_DURATION, easing = FastOutSlowInEasing)) { it / 12 },
+    ) {
+        Column(
+            modifier = Modifier.fillMaxSize().padding(horizontal = 24.dp, vertical = 20.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            DetailHeader(detail.label, onBack)
+            if (!onOffOnly) {
+                Spacer(Modifier.height(16.dp))
+
+                // Live-while-dragging: send throttled updates on every change and the exact final
+                // value on release, so the bulb tracks the finger instead of jumping on let-go.
+                val brightnessThrottle = remember(detail.entityId) { LiveThrottle() }
+                val kelvinThrottle = remember(detail.entityId) { LiveThrottle() }
+                val onBrightnessLive: (Float) -> Unit = {
+                    brightness = it; lightOn = it > 0f
+                    if (brightnessThrottle.allow()) commitBrightness(callService, detail.entityId, it)
+                }
+                val onBrightnessFinal: (Float) -> Unit = {
+                    brightnessThrottle.reset(); lightOn = it > 0f; commitBrightness(callService, detail.entityId, it)
+                }
+                val onKelvinLive: (Int) -> Unit = {
+                    kelvin = it; selectedColor = kelvinToColor(it); lightOn = true
+                    if (kelvinThrottle.allow()) callService("light", "turn_on", detail.entityId, mapOf("color_temp_kelvin" to it))
+                }
+                val onKelvinFinal: (Int) -> Unit = {
+                    kelvinThrottle.reset(); lightOn = true
+                    callService("light", "turn_on", detail.entityId, mapOf("color_temp_kelvin" to it))
+                }
+                val onPreset: (Color, () -> Unit) -> Unit = { color, action ->
+                    lightOn = true; brightness = max(brightness, 0.5f); selectedColor = color; selectedHsv = colorToHsv(color); action()
+                }
+                val onOpenWheel: (Color?) -> Unit = { preset -> preset?.let { selectedHsv = colorToHsv(it) }; wheelVisible = true }
+                val onPowerToggle: (Boolean) -> Unit = { on -> lightOn = on; callService("light", if (on) "turn_on" else "turn_off", detail.entityId) }
+
+                if (deviceLandscape) {
+                    LandscapeLightDetail(
+                        brightness, onBrightnessLive, onBrightnessFinal,
+                        selectedColor, lightOn, sliderMode, { sliderMode = it },
+                        supportsBrightness, supportsColor, supportsWhite, isWhiteChannelLight,
+                        kelvin, minKelvin, maxKelvin,
+                        onKelvinChange = onKelvinLive,
+                        onKelvinCommit = onKelvinFinal,
+                        currentColor = selectedColor,
+                        onPreset = onPreset,
+                        onOpenWheel = onOpenWheel,
+                        onPowerToggle = onPowerToggle,
+                        entityId = detail.entityId,
+                    )
+                } else {
+                    PortraitLightDetail(
+                        brightness, onBrightnessLive, onBrightnessFinal,
+                        selectedColor, lightOn, sliderMode, { sliderMode = it },
+                        supportsBrightness, supportsColor, supportsWhite, isWhiteChannelLight,
+                        kelvin, minKelvin, maxKelvin,
+                        onKelvinChange = onKelvinLive,
+                        onKelvinCommit = onKelvinFinal,
+                        currentColor = selectedColor,
+                        onPreset = onPreset,
+                        onOpenWheel = onOpenWheel,
+                        onPowerToggle = onPowerToggle,
+                        entityId = detail.entityId,
+                    )
+                }
+            }
+        }
+    }
+
+    if (wheelVisible && supportsColor) {
+        ColorWheelOverlay(
+            initialHue = selectedHsv.first,
+            initialSaturation = selectedHsv.second,
+            landscape = deviceLandscape,
+            onDismiss = { wheelVisible = false },
+            onPreview = { hue, saturation -> selectedHsv = Triple(hue, saturation, 1f); selectedColor = hsvToColor(hue, saturation) },
+            onCommit = { hue, saturation ->
+                lightOn = true
+                brightness = max(brightness, 0.5f)
+                callService("light", "turn_on", detail.entityId, mapOf("hs_color" to listOf(hue.toDouble(), saturation.toDouble())))
+            },
+        )
+    }
+}
+
+@Composable
+private fun DetailHeader(label: String, onBack: () -> Unit) {
+    var pressed by remember { mutableStateOf(false) }
+    val scale by animateFloatAsState(if (pressed) AppleMotion.PRESS_SCALE else 1f, AppleMotion.spring(), label = "backScale")
+    Box(Modifier.fillMaxWidth().height(40.dp)) {
+        Box(
+            Modifier.align(Alignment.CenterStart).scale(scale).size(40.dp).clip(CircleShape)
+                .background(AppleColors.frostedFill).border(0.5.dp, AppleColors.frostedBorder, CircleShape)
+                .pointerInput(onBack) {
+                    detectTapGestures(onPress = { pressed = true; tryAwaitRelease(); pressed = false }, onTap = { onBack() })
+                },
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(Icons.AutoMirrored.Filled.ArrowBack, "Retour aux lumières", tint = AppleColors.primary, modifier = Modifier.size(19.dp))
+        }
+        Text(
+            label, style = AppleTypography.bodySmall.copy(fontSize = 13.sp), color = AppleColors.secondary,
+            maxLines = 1, overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.align(Alignment.Center).clip(AppleShapes.pill).background(AppleColors.frostedFill)
+                .border(0.5.dp, AppleColors.frostedBorder, AppleShapes.pill).padding(horizontal = 14.dp, vertical = 7.dp),
+        )
+    }
+}
+
+@Composable
+private fun ColumnScope.LandscapeLightDetail(
+    brightness: Float, onBrightnessChange: (Float) -> Unit, onBrightnessCommit: (Float) -> Unit,
+    trackColor: Color, isOn: Boolean, sliderMode: LightSliderMode, onSliderModeChange: (LightSliderMode) -> Unit,
+    supportsBrightness: Boolean, supportsColor: Boolean, supportsWhite: Boolean,
+    whiteChannel: Boolean, kelvin: Int, minKelvin: Int, maxKelvin: Int,
+    onKelvinChange: (Int) -> Unit, onKelvinCommit: (Int) -> Unit,
+    currentColor: Color, onPreset: (Color, () -> Unit) -> Unit, onOpenWheel: (Color?) -> Unit,
+    onPowerToggle: (Boolean) -> Unit, entityId: String,
+) {
+    BoxWithConstraints(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
+        val sliderHeight = minOf(maxHeight * if (supportsWhite && supportsBrightness) 0.78f else 0.82f, 320.dp)
+        Column(
+            Modifier.fillMaxWidth(),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center,
+        ) {
+            if (sliderMode == LightSliderMode.BRIGHTNESS && supportsBrightness) {
+                VerticalFillSlider(
+                    value = if (isOn) brightness else 0f,
+                    onValueChange = onBrightnessChange,
+                    onValueChangeFinished = onBrightnessCommit,
+                    accent = trackColor,
+                    icon = Icons.Filled.WbSunny,
+                    hapticSteps = 10,
+                    modifier = Modifier.height(sliderHeight).width(88.dp),
+                )
+            } else if (supportsWhite) {
+                VerticalColorTempSlider(
+                    kelvin = kelvin,
+                    onKelvinChange = onKelvinChange,
+                    onKelvinChangeFinished = onKelvinCommit,
+                    minKelvin = minKelvin,
+                    maxKelvin = maxKelvin,
+                    modifier = Modifier.height(sliderHeight).width(88.dp),
+                )
+            }
+            if (supportsWhite && supportsBrightness) {
+                Spacer(Modifier.height(14.dp))
+                SliderModeSwitch(sliderMode, onSliderModeChange)
+            } else if (whiteChannel) {
+                Spacer(Modifier.height(14.dp))
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                    Icon(Icons.Filled.WbSunny, null, tint = AppleColors.secondary, modifier = Modifier.size(18.dp))
+                    Text("Canal blanc intégré", style = AppleTypography.bodySmall, color = AppleColors.secondary)
+                }
+            }
+        }
+    }
+    Spacer(Modifier.height(16.dp))
+    ColorPresetsBar(false, supportsColor, supportsWhite, whiteChannel, currentColor, minKelvin, maxKelvin, entityId, isOn, onPreset, onOpenWheel, onPowerToggle)
+}
+
+@Composable
+private fun ColumnScope.PortraitLightDetail(
+    brightness: Float, onBrightnessChange: (Float) -> Unit, onBrightnessCommit: (Float) -> Unit,
+    trackColor: Color, isOn: Boolean, sliderMode: LightSliderMode, onSliderModeChange: (LightSliderMode) -> Unit,
+    supportsBrightness: Boolean, supportsColor: Boolean, supportsWhite: Boolean,
+    whiteChannel: Boolean, kelvin: Int, minKelvin: Int, maxKelvin: Int,
+    onKelvinChange: (Int) -> Unit, onKelvinCommit: (Int) -> Unit,
+    currentColor: Color, onPreset: (Color, () -> Unit) -> Unit, onOpenWheel: (Color?) -> Unit,
+    onPowerToggle: (Boolean) -> Unit, entityId: String,
+) {
+    BoxWithConstraints(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
+        val controlHeight = minOf(maxHeight, 440.dp)
+        Row(Modifier.fillMaxWidth().height(controlHeight), horizontalArrangement = Arrangement.spacedBy(22.dp)) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                if (sliderMode == LightSliderMode.BRIGHTNESS && supportsBrightness) {
+                    VerticalFillSlider(
+                        value = if (isOn) brightness else 0f,
+                        onValueChange = onBrightnessChange,
+                        onValueChangeFinished = onBrightnessCommit,
+                        accent = trackColor,
+                        icon = Icons.Filled.WbSunny,
+                        hapticSteps = 10,
+                        modifier = Modifier.weight(1f).width(92.dp),
+                    )
+                } else if (supportsWhite) {
+                    VerticalColorTempSlider(
+                        kelvin = kelvin,
+                        onKelvinChange = onKelvinChange,
+                        onKelvinChangeFinished = onKelvinCommit,
+                        minKelvin = minKelvin,
+                        maxKelvin = maxKelvin,
+                        modifier = Modifier.weight(1f).width(92.dp),
+                    )
+                }
+                if (supportsWhite && supportsBrightness) {
+                    Spacer(Modifier.height(12.dp))
+                    SliderModeSwitch(sliderMode, onSliderModeChange, compact = true)
+                }
+            }
+            Column(
+                Modifier.weight(1f).fillMaxHeight().verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(14.dp),
+            ) {
+                ColorPresetsBar(true, supportsColor, supportsWhite, whiteChannel, currentColor, minKelvin, maxKelvin, entityId, isOn, onPreset, onOpenWheel, onPowerToggle)
+            }
+        }
+    }
+}
+
+@Composable
+private fun ColorPresetsBar(
+    portrait: Boolean, supportsColor: Boolean, supportsWhite: Boolean, whiteChannel: Boolean,
+    currentColor: Color, minKelvin: Int, maxKelvin: Int, entityId: String,
+    isOn: Boolean, onPreset: (Color, () -> Unit) -> Unit, onOpenWheel: (Color?) -> Unit,
+    onPowerToggle: (Boolean) -> Unit,
+) {
+    val callService = LocalCallService.current
+    val presetDots = @Composable {
+        if (supportsColor) {
+            colorPresets.forEach { (r, g, b) ->
+                val color = Color(r, g, b)
+                ColorDot(color, colorsNear(color, currentColor), { onPreset(color) { callService("light", "turn_on", entityId, mapOf("rgb_color" to listOf(r, g, b))) } }, { onOpenWheel(color) })
+            }
+        }
+        if (supportsWhite) {
+            whitePresets.forEach { (rawKelvin, swatch) ->
+                val value = rawKelvin.coerceIn(minKelvin, maxKelvin)
+                ColorDot(swatch, colorsNear(swatch, currentColor), { onPreset(swatch) { callService("light", "turn_on", entityId, mapOf("color_temp_kelvin" to value)) } }, null)
+            }
+        }
+    }
+    if (!portrait) {
+        Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+            Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                Row(
+                    Modifier.weight(1f).horizontalScroll(rememberScrollState()).padding(horizontal = 3.dp, vertical = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) { presetDots() }
+                if (supportsColor) {
+                    Spacer(Modifier.width(12.dp))
+                    PaletteButton { onOpenWheel(null) }
+                }
+            }
+            Spacer(Modifier.height(10.dp))
+            PowerButton(isOn, onPowerToggle)
+        }
+    } else {
+        if (supportsColor) Text("Couleurs", style = AppleTypography.bodySmall, color = AppleColors.secondary)
+        val colorRows = colorPresets.takeIf { supportsColor }?.chunked(3).orEmpty()
+        colorRows.forEachIndexed { index, row ->
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                row.forEach { rgb ->
+                    val color = Color(rgb.first, rgb.second, rgb.third)
+                    ColorDot(color, colorsNear(color, currentColor), { onPreset(color) { callService("light", "turn_on", entityId, mapOf("rgb_color" to listOf(rgb.first, rgb.second, rgb.third))) } }, { onOpenWheel(color) })
+                }
+                if (index == colorRows.lastIndex && row.size < 3) PaletteButton { onOpenWheel(null) }
+            }
+        }
+        if (supportsColor && colorPresets.size % 3 == 0) PaletteButton { onOpenWheel(null) }
+        if (supportsWhite) {
+            Text(if (whiteChannel) "Blancs · canal W" else "Blancs", style = AppleTypography.bodySmall, color = AppleColors.secondary)
+            whitePresets.chunked(3).forEach { row ->
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    row.forEach { (rawKelvin, swatch) ->
+                        val value = rawKelvin.coerceIn(minKelvin, maxKelvin)
+                        ColorDot(swatch, colorsNear(swatch, currentColor), { onPreset(swatch) { callService("light", "turn_on", entityId, mapOf("color_temp_kelvin" to value)) } }, null)
+                    }
+                }
+            }
+        }
+        Spacer(Modifier.height(4.dp))
+        PowerButton(isOn, onPowerToggle)
+    }
+}
+
+@Composable
+private fun PowerButton(isOn: Boolean, onToggle: (Boolean) -> Unit) {
+    var pressed by remember { mutableStateOf(false) }
+    val scale by animateFloatAsState(if (pressed) AppleMotion.PRESS_SCALE else 1f, AppleMotion.spring(), label = "powerScale")
+    val background by animateColorAsState(
+        if (isOn) AppleColors.accent.copy(alpha = 0.22f) else AppleColors.frostedFill,
+        tween(200), label = "powerBackground",
+    )
+    Row(
+        Modifier.scale(scale).height(40.dp).clip(AppleShapes.pill).background(background)
+            .border(0.5.dp, if (isOn) AppleColors.accent.copy(alpha = 0.45f) else AppleColors.frostedBorder, AppleShapes.pill)
+            .pointerInput(isOn) {
+                detectTapGestures(
+                    onPress = { pressed = true; tryAwaitRelease(); pressed = false },
+                    onTap = { onToggle(!isOn) },
+                )
+            }.padding(horizontal = 18.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Icon(Icons.Filled.PowerSettingsNew, null, tint = if (isOn) AppleColors.accent else AppleColors.secondary, modifier = Modifier.size(17.dp))
+        Text(if (isOn) "Éteindre" else "Allumer", style = AppleTypography.bodySmall, color = AppleColors.primary)
+    }
+}
+
+@Composable
+private fun PaletteButton(onClick: () -> Unit) {
+    var pressed by remember { mutableStateOf(false) }
+    val scale by animateFloatAsState(if (pressed) 0.92f else 1f, AppleMotion.spring(), label = "paletteScale")
+    Box(
+        Modifier.scale(scale).size(46.dp).clip(CircleShape).background(AppleColors.frostedFill)
+            .border(1.dp, AppleColors.frostedBorder, CircleShape).semantics { contentDescription = "Ouvrir la roue chromatique" }
+            .pointerInput(onClick) { detectTapGestures(onPress = { pressed = true; tryAwaitRelease(); pressed = false }, onTap = { onClick() }) },
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(Icons.Filled.Palette, null, tint = AppleColors.primary, modifier = Modifier.size(21.dp))
+        Icon(Icons.Filled.Add, null, tint = AppleColors.primary, modifier = Modifier.align(Alignment.BottomEnd).size(14.dp))
+    }
+}
+
+@Composable
+private fun ColorDot(color: Color, active: Boolean, onClick: () -> Unit, onLongClick: (() -> Unit)?) {
+    var pressed by remember { mutableStateOf(false) }
+    val scale by animateFloatAsState(if (pressed) 0.92f else 1f, AppleMotion.spring(), label = "dotScale")
+    Box(
+        Modifier.scale(scale).size(46.dp)
+            .then(if (active) Modifier.shadow(10.dp, CircleShape, ambientColor = color, spotColor = color) else Modifier)
+            .clip(CircleShape).background(color).border(if (active) 2.dp else 1.dp, Color.White.copy(alpha = if (active) 0.95f else 0.35f), CircleShape)
+            .semantics { contentDescription = if (active) "Couleur active" else "Appliquer cette couleur" }
+            .pointerInput(onClick, onLongClick) {
+                detectTapGestures(
+                    onPress = { pressed = true; tryAwaitRelease(); pressed = false },
+                    onTap = { onClick() },
+                    onLongPress = { onLongClick?.invoke() },
+                )
+            },
+    )
+}
+
+@Composable
+private fun SliderModeSwitch(
+    mode: LightSliderMode,
+    onModeChange: (LightSliderMode) -> Unit,
+    compact: Boolean = false,
+) {
+    Row(
+        Modifier.clip(AppleShapes.pill).background(AppleColors.frostedFill)
+            .border(0.5.dp, AppleColors.frostedBorder, AppleShapes.pill).padding(3.dp),
+        horizontalArrangement = Arrangement.spacedBy(3.dp),
+    ) {
+        SliderModeButton(
+            icon = Icons.Filled.WbSunny,
+            label = if (compact) null else "Luminosité",
+            selected = mode == LightSliderMode.BRIGHTNESS,
+            onClick = { onModeChange(LightSliderMode.BRIGHTNESS) },
+        )
+        SliderModeButton(
+            icon = Icons.Filled.NightsStay,
+            label = if (compact) null else "Température",
+            selected = mode == LightSliderMode.COLOR_TEMPERATURE,
+            onClick = { onModeChange(LightSliderMode.COLOR_TEMPERATURE) },
+        )
+    }
+}
+
+@Composable
+private fun SliderModeButton(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String?, selected: Boolean, onClick: () -> Unit) {
+    val background by animateColorAsState(if (selected) AppleColors.primary else Color.Transparent, tween(180), label = "modeBackground")
+    val foreground by animateColorAsState(if (selected) Color.Black else AppleColors.secondary, tween(180), label = "modeForeground")
+    Row(
+        Modifier.height(32.dp).clip(AppleShapes.pill).background(background).clickable(onClick = onClick)
+            .padding(horizontal = if (label == null) 9.dp else 11.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Icon(icon, null, tint = foreground, modifier = Modifier.size(15.dp))
+        label?.let { Text(it, style = AppleTypography.labelSmall, color = foreground) }
+    }
+}
+
+@Composable
+private fun ColorWheelOverlay(
+    initialHue: Float, initialSaturation: Float, landscape: Boolean,
+    onDismiss: () -> Unit, onPreview: (Float, Float) -> Unit, onCommit: (Float, Float) -> Unit,
+) {
+    var shown by remember { mutableStateOf(false) }
+    var hue by remember(initialHue) { mutableFloatStateOf(initialHue) }
+    var saturation by remember(initialSaturation) { mutableFloatStateOf(initialSaturation.coerceIn(0f, 1f)) }
+    var touching by remember { mutableStateOf(false) }
+    val preview by animateColorAsState(hsvToColor(hue, saturation), tween(200), label = "wheelPreview")
+    val wheelScale by animateFloatAsState(if (touching) AppleMotion.PRESS_SCALE else 1f, AppleMotion.spring(), label = "wheelPress")
+    LaunchedEffect(Unit) { shown = true }
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false, dismissOnClickOutside = true)) {
+        Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.78f)), contentAlignment = Alignment.Center) {
+            AnimatedVisibility(
+                visible = shown,
+                enter = fadeIn(tween(AppleMotion.FADE_DURATION)) + scaleIn(AppleMotion.spring(), initialScale = 0.92f),
+                exit = fadeOut(tween(AppleMotion.FADE_DURATION)) + scaleOut(targetScale = 0.96f),
+            ) {
+                Column(
+                    Modifier.padding(24.dp).widthIn(max = 520.dp).fillMaxWidth()
+                        .clip(AppleShapes.panel).background(AppleColors.elevated)
+                        .padding(horizontal = 24.dp, vertical = 20.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text("Couleur", style = AppleTypography.titleLarge, color = AppleColors.primary)
+                        Box(Modifier.size(40.dp).clip(CircleShape).background(AppleColors.frostedFill).pointerInput(onDismiss) { detectTapGestures { onDismiss() } }, contentAlignment = Alignment.Center) {
+                            Icon(Icons.Filled.Close, "Fermer", tint = AppleColors.primary, modifier = Modifier.size(20.dp))
+                        }
+                    }
+                    Spacer(Modifier.height(if (landscape) 10.dp else 20.dp))
+                    ColorWheel(
+                        hue, saturation, if (landscape) 190.dp else 240.dp,
+                        Modifier.scale(wheelScale),
+                        onTouchState = { touching = it },
+                        onChange = { h, s -> hue = h; saturation = s; onPreview(h, s) },
+                        onCommit = { onCommit(hue, saturation * 100f) },
+                    )
+                    Spacer(Modifier.height(18.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Box(Modifier.size(34.dp).shadow(5.dp, CircleShape).clip(CircleShape).background(preview).border(2.dp, Color.White, CircleShape))
+                        Text("${hue.roundToInt()}°  ·  ${(saturation * 100).roundToInt()}%", style = AppleTypography.bodySmall, color = AppleColors.secondary)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ColorWheel(
+    hue: Float, saturation: Float, diameter: Dp, modifier: Modifier = Modifier,
+    onTouchState: (Boolean) -> Unit, onChange: (Float, Float) -> Unit, onCommit: () -> Unit,
+) {
+    val hueStops = remember { (0..12).map { hsvToColor(it * 30f, 1f) } }
+    Canvas(
+        modifier.size(diameter).semantics { contentDescription = "Roue chromatique, teinte ${hue.roundToInt()} degrés" }
+            .pointerInput(Unit) {
+                fun update(point: Offset) {
+                    val center = Offset(size.width / 2f, size.height / 2f)
+                    val dx = point.x - center.x
+                    val dy = point.y - center.y
+                    val radius = min(size.width, size.height) / 2f
+                    val sat = (sqrt(dx * dx + dy * dy) / radius).coerceIn(0f, 1f)
+                    val angle = ((atan2(dy, dx) * 180f / PI.toFloat()) + 360f) % 360f
+                    onChange(angle, sat)
+                }
+                detectDragGestures(
+                    onDragStart = { onTouchState(true); update(it) },
+                    onDrag = { change, _ -> update(change.position) },
+                    onDragEnd = { onTouchState(false); onCommit() },
+                    onDragCancel = { onTouchState(false) },
+                )
+            },
+    ) {
+        val radius = size.minDimension / 2f
+        drawCircle(Brush.sweepGradient(hueStops), radius)
+        drawCircle(Brush.radialGradient(listOf(Color.White, Color.Transparent), radius = radius), radius)
+        drawCircle(Color.White.copy(alpha = 0.28f), radius, style = Stroke(1.dp.toPx()))
+        val angle = hue / 180f * PI.toFloat()
+        val thumb = Offset(center.x + cos(angle) * radius * saturation, center.y + sin(angle) * radius * saturation)
+        drawCircle(Color.Black.copy(alpha = 0.28f), 12.dp.toPx(), thumb + Offset(0f, 2.dp.toPx()))
+        drawCircle(Color.White, 9.dp.toPx(), thumb)
+        drawCircle(hsvToColor(hue, saturation), 6.dp.toPx(), thumb)
+    }
+}
+
+private fun commitBrightness(callService: CallService, entityId: String, value: Float) {
+    val pct = (value.coerceIn(0f, 1f) * 100).roundToInt()
+    if (pct == 0) callService("light", "turn_off", entityId)
+    else callService("light", "turn_on", entityId, mapOf("brightness_pct" to pct))
+}
+
+/**
+ * Rate-limiter for live-while-dragging service calls. Lets the first call through, then at most
+ * one per [minIntervalMs] — the slider feels like it responds continuously (premium) without
+ * spamming Home Assistant with a call per pixel. Always [reset] on release, then send the final
+ * value so the light lands exactly where the finger left it.
+ */
+private class LiveThrottle(private val minIntervalMs: Long = 110L) {
+    private var lastMs = 0L
+    fun allow(): Boolean {
+        val now = android.os.SystemClock.uptimeMillis()
+        if (now - lastMs < minIntervalMs) return false
+        lastMs = now
+        return true
+    }
+    fun reset() { lastMs = 0L }
+}
+
+private fun colorsNear(a: Color, b: Color): Boolean {
+    val dr = a.red - b.red
+    val dg = a.green - b.green
+    val db = a.blue - b.blue
+    return dr * dr + dg * dg + db * db < 0.025f
+}
+
+private fun hsvToColor(hue: Float, saturation: Float, value: Float = 1f): Color {
+    val h = ((hue % 360f) + 360f) % 360f
+    val s = saturation.coerceIn(0f, 1f)
+    val v = value.coerceIn(0f, 1f)
+    val c = v * s
+    val x = c * (1f - kotlin.math.abs((h / 60f) % 2f - 1f))
+    val m = v - c
+    val (r, g, b) = when (h.toInt() / 60) {
+        0 -> Triple(c, x, 0f); 1 -> Triple(x, c, 0f); 2 -> Triple(0f, c, x)
+        3 -> Triple(0f, x, c); 4 -> Triple(x, 0f, c); else -> Triple(c, 0f, x)
+    }
+    return Color(r + m, g + m, b + m)
+}
+
+private fun colorToHsv(color: Color): Triple<Float, Float, Float> {
+    val maxValue = max(color.red, max(color.green, color.blue))
+    val minValue = min(color.red, min(color.green, color.blue))
+    val delta = maxValue - minValue
+    val hue = when {
+        delta == 0f -> 0f
+        maxValue == color.red -> 60f * (((color.green - color.blue) / delta) % 6f)
+        maxValue == color.green -> 60f * ((color.blue - color.red) / delta + 2f)
+        else -> 60f * ((color.red - color.green) / delta + 4f)
+    }
+    return Triple((hue + 360f) % 360f, if (maxValue == 0f) 0f else delta / maxValue, maxValue)
+}
+
+private const val NO_ROOM = "Sans pièce"
+
+/** Group the chip's lights by HA area, ordered by name with "Sans pièce" last. */
+private fun lightRooms(chip: LauncherChip, areaOf: (String) -> String?): List<Pair<String, List<PillDetail>>> =
+    chip.details.groupBy { areaOf(it.entityId) ?: NO_ROOM }
+        .toList()
+        .sortedWith(compareBy({ it.first == NO_ROOM }, { it.first }))
+
+/** Existing light list API consumed by SidePanel. */
+@Composable
+fun LightsActions(chip: LauncherChip, onOpenLight: (PillDetail) -> Unit) {
+    val areas = LocalAreas.current
+    val rooms = lightRooms(chip) { areas[it] }
+    // Fewer than two rooms (or registries not loaded yet): keep the plain flat list.
+    if (rooms.size <= 1) {
+        chip.details.forEach { LightRow(it, onOpen = { onOpenLight(it) }) }
+        AllOffRow(chip.details, "Tout éteindre")
+        return
+    }
+
+    var selectedRoom by remember(chip.id) { mutableStateOf<String?>(null) }
+    val current = selectedRoom?.let { name -> rooms.firstOrNull { it.first == name } }
+    if (current == null) {
+        RoomGrid(rooms, onSelect = { selectedRoom = it })
+        AllOffRow(chip.details, "Tout éteindre")
+    } else {
+        DetailHeader(current.first, onBack = { selectedRoom = null })
+        Spacer(Modifier.height(12.dp))
+        current.second.forEach { LightRow(it, onOpen = { onOpenLight(it) }) }
+        AllOffRow(current.second, "Éteindre la pièce")
+    }
+}
+
+@Composable
+private fun RoomGrid(rooms: List<Pair<String, List<PillDetail>>>, onSelect: (String) -> Unit) {
+    rooms.chunked(2).forEach { row ->
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            row.forEach { (name, details) ->
+                RoomCard(name, details, Modifier.weight(1f), onClick = { onSelect(name) })
+            }
+            if (row.size == 1) Spacer(Modifier.weight(1f))
+        }
+    }
+}
+
+@Composable
+private fun RoomCard(name: String, details: List<PillDetail>, modifier: Modifier, onClick: () -> Unit) {
+    var pressed by remember { mutableStateOf(false) }
+    val scale by animateFloatAsState(if (pressed) AppleMotion.PRESS_SCALE else 1f, AppleMotion.spring(), label = "roomScale")
+    val onCount = details.count { it.active }
+    Column(
+        modifier.scale(scale).clip(AppleShapes.card)
+            .background(if (onCount > 0) AppleColors.accent.copy(alpha = 0.14f) else AppleColors.frostedFill, AppleShapes.card)
+            .border(0.5.dp, if (onCount > 0) AppleColors.accent.copy(alpha = 0.4f) else AppleColors.frostedBorder, AppleShapes.card)
+            .pointerInput(onClick) {
+                detectTapGestures(onPress = { pressed = true; tryAwaitRelease(); pressed = false }, onTap = { onClick() })
+            }.padding(horizontal = 16.dp, vertical = 14.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+            Box(Modifier.size(8.dp).clip(CircleShape).background(if (onCount > 0) AppleColors.accent else AppleColors.inactive))
+            Text(name, style = AppleTypography.bodyLarge, color = AppleColors.primary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        Text(
+            if (onCount > 0) "$onCount / ${details.size} allumée${if (onCount > 1) "s" else ""}" else "${details.size} lumière${if (details.size > 1) "s" else ""}",
+            style = AppleTypography.bodySmall, color = AppleColors.secondary,
+        )
+    }
+}
+
+@Composable
+private fun AllOffRow(details: List<PillDetail>, label: String) {
+    val callService = LocalCallService.current
+    if (details.none { it.active }) return
+    Spacer(Modifier.height(4.dp))
+    Row(
+        modifier = Modifier.fillMaxWidth().clip(AppleShapes.pill)
+            .background(AppleColors.frostedFill, AppleShapes.pill)
+            .border(0.5.dp, AppleColors.frostedBorder, AppleShapes.pill)
+            .clickable {
+                details.filter { it.active && it.entityId.isNotBlank() }
+                    .forEach { callService("light", "turn_off", it.entityId) }
+            }.padding(vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
+    ) {
+        Icon(Icons.Outlined.PowerSettingsNew, null, tint = AppleColors.primary, modifier = Modifier.size(16.dp))
+        Text(label, style = AppleTypography.bodySmall.copy(fontSize = 13.sp), color = AppleColors.primary)
+    }
+}
+
+@Composable
+private fun LightRow(detail: PillDetail, onOpen: () -> Unit) {
+    val callService = LocalCallService.current
+    var checked by remember(detail.entityId, detail.active) { mutableStateOf(detail.active) }
+    Row(
+        modifier = Modifier.fillMaxWidth().clip(AppleShapes.card)
+            .background(AppleColors.frostedFill, AppleShapes.card)
+            .border(0.5.dp, AppleColors.frostedBorder, AppleShapes.card)
+            .then(if (detail.entityId.isNotBlank()) Modifier.clickable(onClick = onOpen) else Modifier)
+            .padding(horizontal = 16.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(detail.label, style = AppleTypography.bodyLarge, color = AppleColors.primary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(if (checked) "Allumée" else "Éteinte", style = AppleTypography.bodySmall, color = AppleColors.secondary)
+        }
+        if (detail.entityId.isNotBlank()) {
+            IosSwitch(
+                checked = checked,
+                onCheckedChange = { on ->
+                    checked = on
+                    callService("light", if (on) "turn_on" else "turn_off", detail.entityId)
+                },
+            )
+        } else {
+            Text(detail.value, style = AppleTypography.bodySmall, color = AppleColors.secondary)
+        }
+    }
+}

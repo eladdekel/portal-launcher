@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Portal Launcher</string>
+    <string name="accessibility_label">Portal Launcher Screen Control</string>
+    <string name="accessibility_description">Permet a Portal Launcher d\'eteindre l\'ecran sur commande Home Assistant. Le service ne lit pas le contenu de l\'ecran.</string>
+</resources>

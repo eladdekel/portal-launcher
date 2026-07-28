@@ -1,0 +1,822 @@
+package com.iblu01.portallauncher.ui.components
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.SkipNext
+import androidx.compose.material.icons.filled.SkipPrevious
+import androidx.compose.material.icons.filled.VolumeOff
+import androidx.compose.material.icons.filled.VolumeUp
+import androidx.compose.material.icons.outlined.MusicNote
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.blur
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import coil.ImageLoader
+import coil.compose.AsyncImage
+import coil.request.ImageRequest
+import com.iblu01.portallauncher.domain.model.MediaPlayerVolume
+import com.iblu01.portallauncher.domain.model.PlayingMedia
+import com.iblu01.portallauncher.ui.theme.AppleColors
+import com.iblu01.portallauncher.ui.theme.AppleShapes
+import com.iblu01.portallauncher.ui.theme.AppleTypography
+import okhttp3.OkHttpClient
+import java.net.Proxy
+import java.util.concurrent.TimeUnit
+import kotlinx.coroutines.launch
+
+@Composable
+fun MediaPlayerView(
+    media: PlayingMedia,
+    secondaryMedia: List<PlayingMedia>,
+    haToken: String,
+    onPlayPause: () -> Unit,
+    onPrevious: () -> Unit,
+    onNext: () -> Unit,
+    onVolumeChange: (String, Float) -> Unit,
+    onSecondaryPlayPause: (PlayingMedia) -> Unit,
+    onSecondaryPrevious: (PlayingMedia) -> Unit,
+    onSecondaryNext: (PlayingMedia) -> Unit,
+    onSelectSecondary: (PlayingMedia) -> Unit,
+    onSwipePlayer: (Int) -> Unit,
+    onJoinPlayer: (String) -> Unit,
+    onUnjoinPlayer: (String) -> Unit,
+    onDismiss: (() -> Unit)? = null,
+    modifier: Modifier = Modifier,
+) {
+    val context = LocalContext.current
+    val imageLoader = remember(context) {
+        ImageLoader.Builder(context.applicationContext)
+            .okHttpClient {
+                OkHttpClient.Builder()
+                    .proxy(Proxy.NO_PROXY)
+                    .connectTimeout(10, TimeUnit.SECONDS)
+                    .readTimeout(20, TimeUnit.SECONDS)
+                    .build()
+            }
+            .crossfade(1_000)
+            .build()
+    }
+    val imageRequest = remember(media.coverUrl, haToken) {
+        media.coverUrl?.takeIf { it.isNotBlank() }?.let { url ->
+            ImageRequest.Builder(context)
+                .data(url)
+                .addHeader("Authorization", "Bearer $haToken")
+                .crossfade(true)
+                .build()
+        }
+    }
+    val isPlaying = media.state == "playing" || media.state == "buffering"
+    var volumeDialogVisible by remember { mutableStateOf(false) }
+    var groupDialogVisible by remember { mutableStateOf(false) }
+    var selectedGroupMembers by remember(media.entityId) { mutableStateOf(media.groupMemberIds.toSet()) }
+    LaunchedEffect(media.groupMemberIds) {
+        selectedGroupMembers = media.groupMemberIds.toSet()
+    }
+    var horizontalDrag by remember(media.entityId) { mutableFloatStateOf(0f) }
+    var swipeDirection by remember { mutableIntStateOf(0) }
+    val swipeOffset = remember { Animatable(0f) }
+    val swipeScope = rememberCoroutineScope()
+    LaunchedEffect(secondaryMedia.isEmpty()) {
+        if (secondaryMedia.isEmpty()) {
+            horizontalDrag = 0f
+            swipeDirection = 0
+            swipeOffset.snapTo(0f)
+        }
+    }
+    val fallbackSourceName = media.entityId.substringAfter('.').replace('_', ' ').replaceFirstChar { it.uppercase() }
+    val sourceName = when (media.playerNames.size) {
+        0 -> fallbackSourceName
+        1 -> media.playerNames.first()
+        2 -> "${media.playerNames[0]} + ${media.playerNames[1]}"
+        else -> "${media.playerNames.first()} + ${media.playerNames.size - 1} autres"
+    }
+
+    BoxWithConstraints(
+        modifier = modifier
+            .fillMaxSize()
+            .padding(horizontal = 14.dp, vertical = 16.dp)
+    ) {
+        val availableWidth = maxWidth
+        val availableHeight = maxHeight
+        val availableWidthPx = with(LocalDensity.current) { availableWidth.toPx() }
+        val wide = availableWidth > availableHeight
+        val mainPlayer: @Composable () -> Unit = {
+        Box(
+            modifier = Modifier.fillMaxSize()
+        ) {
+        val incomingMedia = when {
+            swipeDirection > 0 -> secondaryMedia.firstOrNull()
+            swipeDirection < 0 -> secondaryMedia.lastOrNull()
+            else -> null
+        }
+        if (incomingMedia != null) {
+            SwipeIncomingCard(
+                media = incomingMedia,
+                haToken = haToken,
+                imageLoader = imageLoader,
+                modifier = Modifier.fillMaxSize().graphicsLayer {
+                    translationX = if (swipeDirection > 0) {
+                        availableWidthPx + swipeOffset.value
+                    } else {
+                        -availableWidthPx + swipeOffset.value
+                    }
+                    rotationZ = if (swipeDirection > 0) 2.2f else -2.2f
+                },
+            )
+        }
+        Box(
+            modifier = Modifier.fillMaxSize()
+                .graphicsLayer {
+                    translationX = swipeOffset.value
+                    rotationZ = (swipeOffset.value / availableWidthPx) * 2.2f
+                    alpha = 1f - (kotlin.math.abs(swipeOffset.value) / availableWidthPx * 0.18f).coerceIn(0f, 0.18f)
+                }
+                .pointerInput(media.entityId, secondaryMedia.size) {
+                    if (secondaryMedia.isEmpty()) return@pointerInput
+                    detectHorizontalDragGestures(
+                        onDragStart = { horizontalDrag = 0f; swipeDirection = 0 },
+                        onHorizontalDrag = { _, amount ->
+                            horizontalDrag += amount
+                            swipeDirection = if (horizontalDrag < 0f) 1 else -1
+                            swipeScope.launch { swipeOffset.snapTo(horizontalDrag.coerceIn(-availableWidthPx, availableWidthPx)) }
+                        },
+                        onDragEnd = {
+                            if (kotlin.math.abs(horizontalDrag) > 72f) {
+                                val direction = if (horizontalDrag < 0f) 1 else -1
+                                val exit = if (direction > 0) -availableWidthPx else availableWidthPx
+                                swipeScope.launch {
+                                    swipeOffset.animateTo(exit, tween(180))
+                                    onSwipePlayer(direction)
+                                    swipeOffset.snapTo(-exit)
+                                    swipeOffset.animateTo(0f, tween(240))
+                                    swipeDirection = 0
+                                }
+                            } else {
+                                swipeScope.launch {
+                                    swipeOffset.animateTo(0f, tween(180))
+                                    swipeDirection = 0
+                                }
+                            }
+                            horizontalDrag = 0f
+                        },
+                        onDragCancel = {
+                            horizontalDrag = 0f
+                            swipeScope.launch {
+                                swipeOffset.animateTo(0f, tween(180))
+                                swipeDirection = 0
+                            }
+                        },
+                    )
+                }
+                .clip(AppleShapes.panel)
+                .background(Color.Black.copy(alpha = 0.72f))
+                .border(0.5.dp, AppleColors.frostedBorder, AppleShapes.panel)
+        ) {
+        if (imageRequest != null) {
+            AsyncImage(
+                model = imageRequest,
+                imageLoader = imageLoader,
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize().blur(42.dp).alpha(0.34f)
+            )
+        }
+        Box(
+            Modifier.fillMaxSize().background(
+                Brush.verticalGradient(
+                    0f to Color.Black.copy(alpha = 0.16f),
+                    0.48f to Color.Black.copy(alpha = 0.54f),
+                    1f to Color.Black.copy(alpha = 0.94f),
+                )
+            )
+        )
+
+        if (wide) {
+            Box(Modifier.fillMaxSize()) {
+                val artworkSize = minOf(availableHeight - 64.dp, availableWidth * 0.30f, 260.dp)
+                Row(
+                    modifier = Modifier.fillMaxSize().padding(horizontal = 18.dp, vertical = 14.dp),
+                    horizontalArrangement = Arrangement.spacedBy(22.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(artworkSize)
+                            .clip(RoundedCornerShape(24.dp))
+                            .background(Color.White.copy(alpha = 0.07f))
+                            .border(1.dp, Color.White.copy(alpha = 0.16f), RoundedCornerShape(24.dp)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        if (imageRequest != null) {
+                            AsyncImage(
+                                model = imageRequest,
+                                imageLoader = imageLoader,
+                                contentDescription = "Pochette de ${media.title}",
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier.fillMaxSize()
+                            )
+                        } else {
+                            Icon(Icons.Outlined.MusicNote, "Aucune pochette", tint = AppleColors.secondary, modifier = Modifier.size(64.dp))
+                        }
+                    }
+
+                    Column(
+                        modifier = Modifier.weight(1f),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .clip(AppleShapes.pill)
+                                .background(AppleColors.frostedFill, AppleShapes.pill)
+                                .border(0.5.dp, AppleColors.frostedBorder, AppleShapes.pill)
+                                .then(if (media.groupablePlayers.size > 1) Modifier.clickable { groupDialogVisible = true } else Modifier)
+                                .padding(horizontal = 14.dp, vertical = 7.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(7.dp),
+                        ) {
+                            Box(Modifier.size(7.dp).background(if (isPlaying) AppleColors.active else AppleColors.warning, CircleShape))
+                            Text(sourceName, style = AppleTypography.bodySmall.copy(fontSize = 13.sp), color = AppleColors.secondary)
+                        }
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(3.dp),
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp),
+                        ) {
+                            Text(media.title, style = AppleTypography.headlineLarge.copy(fontWeight = FontWeight.Bold, fontSize = 22.sp), color = AppleColors.primary, maxLines = 2, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center)
+                            Text(media.artist, style = AppleTypography.titleMedium.copy(fontSize = 16.sp), color = AppleColors.primary.copy(alpha = 0.72f), maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center)
+                            media.album?.takeIf { it.isNotBlank() }?.let { album ->
+                                Text(album, style = AppleTypography.bodySmall.copy(fontSize = 13.sp), color = AppleColors.secondary.copy(alpha = 0.72f), maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center)
+                            }
+                        }
+
+                        Row(
+                            modifier = Modifier
+                                .clip(AppleShapes.pill)
+                                .background(AppleColors.frostedFill, AppleShapes.pill)
+                                .border(0.5.dp, AppleColors.frostedBorder, AppleShapes.pill)
+                                .padding(horizontal = 10.dp, vertical = 6.dp),
+                            horizontalArrangement = Arrangement.spacedBy(14.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            IconButton(onClick = onPrevious, modifier = Modifier.size(40.dp)) {
+                                Icon(Icons.Filled.SkipPrevious, "Titre précédent", tint = AppleColors.primary, modifier = Modifier.size(22.dp))
+                            }
+                            IconButton(onClick = onPlayPause, modifier = Modifier.size(50.dp).background(Color.White, CircleShape)) {
+                                Icon(if (isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow, if (isPlaying) "Pause" else "Lecture", tint = Color.Black, modifier = Modifier.size(28.dp))
+                            }
+                            IconButton(onClick = onNext, modifier = Modifier.size(40.dp)) {
+                                Icon(Icons.Filled.SkipNext, "Titre suivant", tint = AppleColors.primary, modifier = Modifier.size(22.dp))
+                            }
+                        }
+
+                        Row(
+                            modifier = Modifier
+                                .clip(AppleShapes.pill)
+                                .background(AppleColors.frostedFill, AppleShapes.pill)
+                                .border(0.5.dp, AppleColors.frostedBorder, AppleShapes.pill)
+                                .clickable { volumeDialogVisible = true }
+                                .padding(horizontal = 14.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(7.dp)
+                        ) {
+                            Icon(if (media.isMuted) Icons.Filled.VolumeOff else Icons.Filled.VolumeUp, "Volume", tint = AppleColors.secondary, modifier = Modifier.size(18.dp))
+                            Text(if (media.players.size > 1) "Volumes · ${media.players.size} appareils" else "Volume · ${media.volumePercent}%", style = AppleTypography.bodySmall.copy(fontSize = 12.sp), color = AppleColors.primary)
+                        }
+                    }
+                }
+                if (onDismiss != null) {
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(10.dp)
+                            .size(32.dp)
+                            .clip(CircleShape)
+                            .background(AppleColors.frostedFill)
+                            .border(0.5.dp, AppleColors.frostedBorder, CircleShape)
+                            .clickable { onDismiss() },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(Icons.Filled.Close, contentDescription = "Fermer le lecteur", tint = AppleColors.secondary, modifier = Modifier.size(16.dp))
+                    }
+                }
+            }
+        } else {
+            val artworkRatio = if (secondaryMedia.isEmpty()) 0.43f else 0.34f
+            val artworkSize = minOf(availableWidth - 56.dp, availableHeight * artworkRatio, 310.dp)
+            Column(
+                modifier = Modifier.fillMaxSize().padding(horizontal = 24.dp, vertical = 20.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(14.dp)
+            ) {
+                Box(
+                    modifier = Modifier.fillMaxWidth().height(36.dp),
+                ) {
+                    if (onDismiss != null) {
+                        Box(
+                            modifier = Modifier
+                                .align(Alignment.CenterStart)
+                                .size(36.dp)
+                                .clip(CircleShape)
+                                .background(AppleColors.frostedFill)
+                                .border(0.5.dp, AppleColors.frostedBorder, CircleShape)
+                                .clickable { onDismiss() },
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(Icons.Filled.Close, contentDescription = "Fermer le lecteur", tint = AppleColors.secondary, modifier = Modifier.size(18.dp))
+                        }
+                    }
+                    Row(
+                        modifier = Modifier
+                            .align(Alignment.Center)
+                            .clip(AppleShapes.pill)
+                            .background(AppleColors.frostedFill, AppleShapes.pill)
+                            .border(0.5.dp, AppleColors.frostedBorder, AppleShapes.pill)
+                            .then(if (media.groupablePlayers.size > 1) Modifier.clickable { groupDialogVisible = true } else Modifier)
+                            .padding(horizontal = 14.dp, vertical = 7.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(7.dp),
+                    ) {
+                        Box(Modifier.size(7.dp).background(if (isPlaying) AppleColors.active else AppleColors.warning, CircleShape))
+                        Text(sourceName, style = AppleTypography.bodySmall.copy(fontSize = 13.sp), color = AppleColors.secondary)
+                    }
+                }
+
+                Box(
+                    modifier = Modifier
+                        .size(artworkSize)
+                        .clip(RoundedCornerShape(28.dp))
+                        .background(Color.White.copy(alpha = 0.07f))
+                        .border(1.dp, Color.White.copy(alpha = 0.16f), RoundedCornerShape(28.dp)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    if (imageRequest != null) {
+                        AsyncImage(model = imageRequest, imageLoader = imageLoader, contentDescription = "Pochette de ${media.title}", contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+                    } else {
+                        Icon(Icons.Outlined.MusicNote, "Aucune pochette", tint = AppleColors.secondary, modifier = Modifier.size(82.dp))
+                    }
+                }
+
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(3.dp),
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp)
+                ) {
+                    Text(media.title, style = AppleTypography.headlineLarge.copy(fontWeight = FontWeight.Bold, fontSize = 26.sp), color = AppleColors.primary, maxLines = 2, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center)
+                    Text(media.artist, style = AppleTypography.titleMedium.copy(fontSize = 17.sp), color = AppleColors.primary.copy(alpha = 0.72f), maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center)
+                    media.album?.takeIf { it.isNotBlank() }?.let { album ->
+                        Text(album, style = AppleTypography.bodySmall, color = AppleColors.secondary.copy(alpha = 0.72f), maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center)
+                    }
+                }
+
+                Spacer(modifier = Modifier.weight(1f))
+
+                Row(
+                    modifier = Modifier
+                        .clip(AppleShapes.pill)
+                        .background(AppleColors.frostedFill, AppleShapes.pill)
+                        .border(0.5.dp, AppleColors.frostedBorder, AppleShapes.pill)
+                        .padding(horizontal = 14.dp, vertical = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(18.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    IconButton(onClick = onPrevious, modifier = Modifier.size(46.dp)) {
+                        Icon(Icons.Filled.SkipPrevious, "Titre précédent", tint = AppleColors.primary, modifier = Modifier.size(26.dp))
+                    }
+                    IconButton(onClick = onPlayPause, modifier = Modifier.size(58.dp).background(Color.White, CircleShape)) {
+                        Icon(if (isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow, if (isPlaying) "Pause" else "Lecture", tint = Color.Black, modifier = Modifier.size(32.dp))
+                    }
+                    IconButton(onClick = onNext, modifier = Modifier.size(46.dp)) {
+                        Icon(Icons.Filled.SkipNext, "Titre suivant", tint = AppleColors.primary, modifier = Modifier.size(26.dp))
+                    }
+                }
+
+                Row(
+                    modifier = Modifier
+                        .clip(AppleShapes.pill)
+                        .background(AppleColors.frostedFill, AppleShapes.pill)
+                        .border(0.5.dp, AppleColors.frostedBorder, AppleShapes.pill)
+                        .clickable { volumeDialogVisible = true }
+                        .padding(horizontal = 18.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(9.dp)
+                ) {
+                    Icon(if (media.isMuted) Icons.Filled.VolumeOff else Icons.Filled.VolumeUp, "Volume", tint = AppleColors.secondary, modifier = Modifier.size(20.dp))
+                    Text(if (media.players.size > 1) "Volumes · ${media.players.size} appareils" else "Volume · ${media.volumePercent}%", style = AppleTypography.bodySmall.copy(fontSize = 13.sp), color = AppleColors.primary)
+                }
+            }
+        }
+        }
+        }
+        }
+
+        if (wide && secondaryMedia.isNotEmpty()) {
+            // Strip mode: main player 66% wide, secondary sessions stacked in the last third.
+            Row(modifier = Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Box(modifier = Modifier.weight(2f).fillMaxHeight()) { mainPlayer() }
+                Column(
+                    modifier = Modifier.weight(1f).fillMaxHeight(),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    secondaryMedia.take(2).forEach { session ->
+                        MiniMediaPlayerVertical(
+                            media = session,
+                            haToken = haToken,
+                            imageLoader = imageLoader,
+                            onPlayPause = { onSecondaryPlayPause(session) },
+                            onPrevious = { onSecondaryPrevious(session) },
+                            onNext = { onSecondaryNext(session) },
+                            onSelect = { onSelectSecondary(session) },
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+                    if (secondaryMedia.size > 2) {
+                        Text(
+                            "+ ${secondaryMedia.size - 2} autres",
+                            style = AppleTypography.bodySmall,
+                            color = AppleColors.secondary,
+                            modifier = Modifier.align(Alignment.CenterHorizontally),
+                        )
+                    }
+                }
+            }
+        } else {
+            Column(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Box(modifier = Modifier.fillMaxWidth().weight(1f)) { mainPlayer() }
+                secondaryMedia.take(2).forEach { session ->
+                    MiniMediaPlayer(
+                        media = session,
+                        haToken = haToken,
+                        imageLoader = imageLoader,
+                        onPlayPause = { onSecondaryPlayPause(session) },
+                        onPrevious = { onSecondaryPrevious(session) },
+                        onNext = { onSecondaryNext(session) },
+                        onSelect = { onSelectSecondary(session) },
+                    )
+                }
+                if (secondaryMedia.size > 2) {
+                    Text(
+                        "+ ${secondaryMedia.size - 2} autres lectures actives",
+                        style = AppleTypography.bodySmall,
+                        color = AppleColors.secondary,
+                    )
+                }
+            }
+        }
+
+        if (volumeDialogVisible) {
+            Dialog(onDismissRequest = { volumeDialogVisible = false }) {
+                Surface(
+                    shape = RoundedCornerShape(28.dp),
+                    color = Color(0xF21B1D20),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, AppleColors.frostedBorder),
+                ) {
+                    Column(
+                        modifier = Modifier.padding(24.dp).fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(18.dp)
+                    ) {
+                        Text("Volumes", style = AppleTypography.headlineLarge.copy(fontSize = 24.sp), color = AppleColors.primary)
+                        (media.players.ifEmpty {
+                            listOf(com.iblu01.portallauncher.domain.model.MediaPlayerVolume(media.entityId, sourceName, media.volumePercent, media.isMuted))
+                        }).forEach { player ->
+                            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                                    Text(player.name, modifier = Modifier.weight(1f), style = AppleTypography.titleMedium, color = AppleColors.primary)
+                                    Text("${player.volumePercent}%", style = AppleTypography.bodySmall, color = AppleColors.secondary)
+                                }
+                                var position by remember(player.entityId, player.volumePercent) {
+                                    mutableFloatStateOf(player.volumePercent / 100f)
+                                }
+                                Slider(
+                                    value = position,
+                                    onValueChange = { position = it },
+                                    onValueChangeFinished = { onVolumeChange(player.entityId, position) },
+                                    colors = SliderDefaults.colors(
+                                        activeTrackColor = Color.White,
+                                        inactiveTrackColor = Color.White.copy(alpha = 0.16f),
+                                        thumbColor = Color.White,
+                                    ),
+                                )
+                            }
+                        }
+                        Text(
+                            "Fermer",
+                            modifier = Modifier.align(Alignment.End).clip(AppleShapes.pill).clickable { volumeDialogVisible = false }
+                                .background(AppleColors.frostedFill).padding(horizontal = 18.dp, vertical = 10.dp),
+                            style = AppleTypography.titleMedium,
+                            color = AppleColors.primary,
+                        )
+                    }
+                }
+            }
+        }
+        if (groupDialogVisible) {
+            Dialog(onDismissRequest = { groupDialogVisible = false }) {
+                Surface(
+                    shape = RoundedCornerShape(28.dp),
+                    color = Color(0xF21B1D20),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, AppleColors.frostedBorder),
+                ) {
+                    Column(
+                        modifier = Modifier.padding(24.dp).fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        Text("Diffuser dans", style = AppleTypography.headlineLarge.copy(fontSize = 24.sp), color = AppleColors.primary)
+                        Text("Sélectionne les appareils à coupler avec $sourceName", style = AppleTypography.bodySmall, color = AppleColors.secondary)
+                        media.groupablePlayers.forEach { player ->
+                            val isLeader = player.entityId == media.entityId
+                            val isMember = isLeader || player.entityId in selectedGroupMembers
+                            Row(
+                                modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp))
+                                    .clickable(enabled = !isLeader, role = Role.Checkbox) {
+                                        if (isMember) {
+                                            selectedGroupMembers = selectedGroupMembers - player.entityId
+                                            onUnjoinPlayer(player.entityId)
+                                        } else {
+                                            selectedGroupMembers = selectedGroupMembers + player.entityId
+                                            onJoinPlayer(player.entityId)
+                                        }
+                                    }
+                                    .background(if (isMember) AppleColors.active.copy(alpha = 0.13f) else Color.White.copy(alpha = 0.04f))
+                                    .padding(horizontal = 14.dp, vertical = 13.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            ) {
+                                Box(
+                                    Modifier.size(20.dp).clip(CircleShape)
+                                        .border(1.dp, if (isMember) AppleColors.active else AppleColors.secondary, CircleShape)
+                                        .background(if (isMember) AppleColors.active else Color.Transparent),
+                                )
+                                Text(player.name, modifier = Modifier.weight(1f), style = AppleTypography.titleMedium, color = AppleColors.primary)
+                                if (isLeader) Text("Principal", style = AppleTypography.bodySmall, color = AppleColors.secondary)
+                            }
+                        }
+                        Text(
+                            "Fermer",
+                            modifier = Modifier.align(Alignment.End).clip(AppleShapes.pill).clickable { groupDialogVisible = false }
+                                .background(AppleColors.frostedFill).padding(horizontal = 18.dp, vertical = 10.dp),
+                            style = AppleTypography.titleMedium,
+                            color = AppleColors.primary,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SwipeIncomingCard(
+    media: PlayingMedia,
+    haToken: String,
+    imageLoader: ImageLoader,
+    modifier: Modifier = Modifier,
+) {
+    val context = LocalContext.current
+    val request = remember(media.coverUrl, haToken) {
+        media.coverUrl?.let {
+            ImageRequest.Builder(context).data(it).addHeader("Authorization", "Bearer $haToken").build()
+        }
+    }
+    val rooms = when (media.playerNames.size) {
+        0 -> media.entityId.substringAfter('.').replace('_', ' ')
+        1 -> media.playerNames.first()
+        2 -> "${media.playerNames[0]} + ${media.playerNames[1]}"
+        else -> "${media.playerNames.first()} + ${media.playerNames.size - 1} autres"
+    }
+    Box(
+        modifier = modifier.clip(AppleShapes.panel).background(Color.Black.copy(alpha = 0.86f))
+            .border(0.5.dp, AppleColors.frostedBorder, AppleShapes.panel),
+    ) {
+        if (request != null) AsyncImage(
+            model = request,
+            imageLoader = imageLoader,
+            contentDescription = null,
+            contentScale = ContentScale.Crop,
+            modifier = Modifier.fillMaxSize().blur(42.dp).alpha(0.3f),
+        )
+        Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Black.copy(alpha = 0.18f), Color.Black.copy(alpha = 0.92f)))))
+        Column(
+            modifier = Modifier.fillMaxSize().padding(24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center,
+        ) {
+            Text(rooms, style = AppleTypography.bodySmall, color = AppleColors.secondary)
+            Box(
+                modifier = Modifier.padding(vertical = 18.dp).fillMaxWidth(0.86f).weight(1f, fill = false)
+                    .clip(RoundedCornerShape(28.dp)).background(Color.White.copy(alpha = 0.08f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                if (request != null) AsyncImage(
+                    model = request,
+                    imageLoader = imageLoader,
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize(),
+                ) else Icon(Icons.Outlined.MusicNote, null, tint = AppleColors.secondary, modifier = Modifier.size(72.dp))
+            }
+            Text(media.title, style = AppleTypography.headlineLarge.copy(fontSize = 25.sp), color = AppleColors.primary, maxLines = 2, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center)
+            Text(media.artist, style = AppleTypography.titleMedium, color = AppleColors.secondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+    }
+}
+
+@Composable
+private fun MiniMediaPlayer(
+    media: PlayingMedia,
+    haToken: String,
+    imageLoader: ImageLoader,
+    onPlayPause: () -> Unit,
+    onPrevious: () -> Unit,
+    onNext: () -> Unit,
+    onSelect: () -> Unit,
+) {
+    val context = LocalContext.current
+    val request = remember(media.coverUrl, haToken) {
+        media.coverUrl?.let {
+            ImageRequest.Builder(context).data(it).addHeader("Authorization", "Bearer $haToken").crossfade(true).build()
+        }
+    }
+    val rooms = when (media.playerNames.size) {
+        0 -> media.entityId.substringAfter('.').replace('_', ' ')
+        1 -> media.playerNames.first()
+        2 -> "${media.playerNames[0]} + ${media.playerNames[1]}"
+        else -> "${media.playerNames.first()} + ${media.playerNames.size - 1} autres"
+    }
+    val playing = media.state == "playing" || media.state == "buffering"
+    Row(
+        modifier = Modifier.fillMaxWidth().height(58.dp).clip(RoundedCornerShape(18.dp))
+            .background(AppleColors.frostedFill).border(0.5.dp, AppleColors.frostedBorder, RoundedCornerShape(18.dp))
+            .clickable(onClick = onSelect)
+            .padding(6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Box(
+            modifier = Modifier.size(46.dp).clip(RoundedCornerShape(13.dp)).background(Color.White.copy(alpha = 0.08f)),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (request != null) AsyncImage(
+                model = request,
+                imageLoader = imageLoader,
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize(),
+            ) else Icon(Icons.Outlined.MusicNote, null, tint = AppleColors.secondary, modifier = Modifier.size(22.dp))
+        }
+        Column(modifier = Modifier.weight(1f)) {
+            Text(rooms, style = AppleTypography.bodySmall.copy(fontSize = 11.sp), color = AppleColors.secondary, maxLines = 1)
+            Text(media.title, style = AppleTypography.titleMedium.copy(fontSize = 14.sp), color = AppleColors.primary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(media.artist, style = AppleTypography.bodySmall.copy(fontSize = 11.sp), color = AppleColors.secondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        IconButton(onClick = onPrevious, modifier = Modifier.size(30.dp)) {
+            Icon(Icons.Filled.SkipPrevious, "Titre précédent dans $rooms", tint = AppleColors.primary, modifier = Modifier.size(20.dp))
+        }
+        IconButton(onClick = onPlayPause, modifier = Modifier.size(38.dp).background(Color.White, CircleShape)) {
+            Icon(
+                if (playing) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                if (playing) "Mettre en pause $rooms" else "Lire dans $rooms",
+                tint = Color.Black,
+                modifier = Modifier.size(22.dp),
+            )
+        }
+        IconButton(onClick = onNext, modifier = Modifier.size(30.dp)) {
+            Icon(Icons.Filled.SkipNext, "Titre suivant dans $rooms", tint = AppleColors.primary, modifier = Modifier.size(20.dp))
+        }
+    }
+}
+
+/** Compact vertical card for a secondary session, used in the 33% column of strip mode. */
+@Composable
+private fun MiniMediaPlayerVertical(
+    media: PlayingMedia,
+    haToken: String,
+    imageLoader: ImageLoader,
+    onPlayPause: () -> Unit,
+    onPrevious: () -> Unit,
+    onNext: () -> Unit,
+    onSelect: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val context = LocalContext.current
+    val request = remember(media.coverUrl, haToken) {
+        media.coverUrl?.let {
+            ImageRequest.Builder(context).data(it).addHeader("Authorization", "Bearer $haToken").crossfade(true).build()
+        }
+    }
+    val rooms = when (media.playerNames.size) {
+        0 -> media.entityId.substringAfter('.').replace('_', ' ')
+        1 -> media.playerNames.first()
+        2 -> "${media.playerNames[0]} + ${media.playerNames[1]}"
+        else -> "${media.playerNames.first()} + ${media.playerNames.size - 1} autres"
+    }
+    val playing = media.state == "playing" || media.state == "buffering"
+    Column(
+        modifier = modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp))
+            .background(AppleColors.frostedFill).border(0.5.dp, AppleColors.frostedBorder, RoundedCornerShape(18.dp))
+            .clickable(onClick = onSelect)
+            .padding(horizontal = 14.dp, vertical = 12.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        // Square cover bounded by both card width and remaining height, centered.
+        Box(
+            modifier = Modifier.weight(1f).fillMaxWidth(),
+            contentAlignment = Alignment.Center,
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxHeight()
+                    .aspectRatio(1f, matchHeightConstraintsFirst = true)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(Color.White.copy(alpha = 0.08f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                if (request != null) AsyncImage(
+                    model = request,
+                    imageLoader = imageLoader,
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize(),
+                ) else Icon(Icons.Outlined.MusicNote, null, tint = AppleColors.secondary, modifier = Modifier.size(28.dp))
+            }
+        }
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(rooms, style = AppleTypography.bodySmall.copy(fontSize = 11.sp), color = AppleColors.secondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(media.title, style = AppleTypography.titleMedium.copy(fontSize = 14.sp), color = AppleColors.primary, maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center)
+            Text(media.artist, style = AppleTypography.bodySmall.copy(fontSize = 11.sp), color = AppleColors.secondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            IconButton(onClick = onPrevious, modifier = Modifier.size(30.dp)) {
+                Icon(Icons.Filled.SkipPrevious, "Titre précédent dans $rooms", tint = AppleColors.primary, modifier = Modifier.size(20.dp))
+            }
+            IconButton(onClick = onPlayPause, modifier = Modifier.size(38.dp).background(Color.White, CircleShape)) {
+                Icon(
+                    if (playing) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                    if (playing) "Mettre en pause $rooms" else "Lire dans $rooms",
+                    tint = Color.Black,
+                    modifier = Modifier.size(22.dp),
+                )
+            }
+            IconButton(onClick = onNext, modifier = Modifier.size(30.dp)) {
+                Icon(Icons.Filled.SkipNext, "Titre suivant dans $rooms", tint = AppleColors.primary, modifier = Modifier.size(20.dp))
+            }
+        }
+    }
+}

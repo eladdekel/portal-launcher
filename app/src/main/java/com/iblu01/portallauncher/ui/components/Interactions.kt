@@ -1,0 +1,64 @@
+package com.iblu01.portallauncher.ui.components
+
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.composed
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
+import com.iblu01.portallauncher.ui.theme.AppleMotion
+
+/**
+ * iOS-style tap feedback: scales to [AppleMotion.PRESS_SCALE] on press and springs
+ * back on release. No Material ripple. Runs on the GPU via [graphicsLayer] so it
+ * never triggers recomposition of the wrapped content.
+ */
+fun Modifier.pressScale(
+    interactionSource: MutableInteractionSource,
+): Modifier = composed {
+    val pressed by interactionSource.collectIsPressedAsState()
+    val scale by animateFloatAsState(
+        targetValue = if (pressed) AppleMotion.PRESS_SCALE else 1f,
+        animationSpec = AppleMotion.spring(),
+        label = "pressScale"
+    )
+    graphicsLayer { scaleX = scale; scaleY = scale }
+}
+
+/**
+ * Rippleless clickable that also drives [pressScale]. Use for every tappable
+ * Apple-style surface (rows, buttons, cards).
+ */
+@Composable
+fun Modifier.appleClickable(onClick: () -> Unit): Modifier = appleClickable(onClick, null)
+
+/**
+ * Rippleless clickable with optional long-press. When [onLongPress] is set the long-press
+ * fires (and its gesture is consumed, so a parent long-press handler does not also fire).
+ */
+@Composable
+fun Modifier.appleClickable(onClick: () -> Unit, onLongPress: (() -> Unit)?): Modifier {
+    val interaction = remember { MutableInteractionSource() }
+    return this
+        .pressScale(interaction)
+        .pointerInput(onClick, onLongPress) {
+            detectTapGestures(
+                onPress = { offset ->
+                    val press = androidx.compose.foundation.interaction.PressInteraction.Press(offset)
+                    interaction.emit(press)
+                    val released = tryAwaitRelease()
+                    interaction.emit(
+                        if (released) androidx.compose.foundation.interaction.PressInteraction.Release(press)
+                        else androidx.compose.foundation.interaction.PressInteraction.Cancel(press)
+                    )
+                },
+                onLongPress = onLongPress?.let { { _ -> it() } },
+                onTap = { onClick() }
+            )
+        }
+}

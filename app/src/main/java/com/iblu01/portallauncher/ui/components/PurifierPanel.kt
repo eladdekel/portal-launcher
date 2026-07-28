@@ -1,0 +1,74 @@
+package com.iblu01.portallauncher.ui.components
+
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.width
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.AutoMode
+import androidx.compose.material.icons.outlined.Bedtime
+import androidx.compose.material.icons.outlined.Pets
+import androidx.compose.material.icons.outlined.PowerSettingsNew
+import androidx.compose.material.icons.outlined.Tune
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.unit.dp
+import com.iblu01.portallauncher.LauncherChip
+import com.iblu01.portallauncher.ui.LocalCallService
+import com.iblu01.portallauncher.ui.components.controls.VerticalSegmentedSelector
+import com.iblu01.portallauncher.ui.theme.AppleColors
+
+private enum class PurifierMode(val preset: String?, val label: String, val icon: ImageVector) {
+    AUTO("auto", "Auto", Icons.Outlined.AutoMode),
+    SLEEP("sleep", "Nuit", Icons.Outlined.Bedtime),
+    MANUAL("manual", "Manuel", Icons.Outlined.Tune),
+    PET("pet", "Animaux", Icons.Outlined.Pets),
+    OFF(null, "Arrêt", Icons.Outlined.PowerSettingsNew),
+}
+
+@Composable
+fun PurifierActions(chip: LauncherChip) {
+    val callService = LocalCallService.current
+    val entity = rememberEntity(chip.entityId)
+    val running = entity?.state?.equals("on", true) == true
+    val currentPreset = entity?.attributes?.optString("preset_mode")?.takeIf { it.isNotBlank() }
+
+    val currentMode = when {
+        !running -> PurifierMode.OFF
+        currentPreset != null -> PurifierMode.entries.firstOrNull { it.preset == currentPreset.lowercase() }
+            ?: PurifierMode.MANUAL
+        else -> PurifierMode.MANUAL
+    }
+
+    Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+        VerticalSegmentedSelector(
+            options = PurifierMode.entries.toList(),
+            selected = currentMode,
+            onSelect = { mode ->
+                if (mode == PurifierMode.OFF) {
+                    callService("fan", "turn_off", chip.entityId)
+                } else {
+                    callService("fan", "set_preset_mode", chip.entityId, mapOf("preset_mode" to mode.preset!!))
+                }
+            },
+            label = { it.label },
+            icon = { it.icon },
+            accent = AppleColors.active,
+            isNeutral = { it == PurifierMode.OFF },
+            enabled = entity != null,
+            segmentHeight = 66.dp,
+            segmentPadding = 4.dp,
+            modifier = Modifier.width(88.dp),
+        )
+        if (chip.details.isNotEmpty()) {
+            Spacer(Modifier.height(12.dp))
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                chip.details.forEach { PanelDetailRow(it) }
+            }
+        }
+    }
+}
