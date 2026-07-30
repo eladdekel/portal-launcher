@@ -1,6 +1,10 @@
 # Portal Launcher — Feature Reference
 
 Exhaustive inventory of what the app actually does, derived from the code (not from intent).
+
+Scope note: this is a **launcher** that takes the home role on any Android 9+ device, whose default
+screen is a clock and whose Home Assistant integration is optional. Portal-specific behaviour (the
+dream/sleep presence proxy, the API 28 blur fallback) is called out where it appears.
 Every non-obvious claim carries a `file:line`. Written 2026-07-28 against branch
 `refactor/mad-panel-architecture`.
 
@@ -331,58 +335,62 @@ The presence proxy depends on Portal dream broadcasts; tap compensation is keyed
 ## 7. Settings, preferences, web config
 
 ### Pages
-- **Setup wizard** (first run, when the token is blank): mDNS instance tiles → manual address → access-key field with a 5-step "where do I find my key" dialog → live connection test → done.
-- **Ma maison**: HA address + token, network search, live HA status; an "advanced" section reveals MQTT host/port/user/password/device name with its own live test. The MQTT host auto-fills from the HA URL until you hand-edit it.
-- **Informations affichées** (pills): live search by label/entity id, otherwise category families showing "N sur M" enabled, per-entity toggles with friendly state, and bulk show/hide.
-- **Application**: HA app picker, background mode, scrim opacity row (→ preview activity), clock theme row (→ editor), always-on toggle, auto screen-off toggle + minutes, auto-return toggle + delay.
-- **Caméras**: pair a trigger `binary_sensor` with a `camera` entity; list with per-row delete.
-- **Développeur**: dev keep-screen-on, tap sensitivity, temperature offset, wireless ADB (IP/port/enable, root-gated with a "Accès root requis" toast), web config toggle + token regeneration + the URL hint, a "grant useful permissions" sequence, and a root-gated reboot.
+One flat `HorizontalPager` holds everything: `[clock, app page 0, app page 1, …]` (`LauncherPager.kt`). Not a pager nested inside the apps page — two horizontal scrollers competing for the same drag has no good answer, and stock launchers treat their home screens as one pager for the same reason. Swipe right-to-left to reach the apps, and keep going for further pages.
+- The clock header is **pinned above every page**, not inside one. It shrinks to 34 % over the clock→apps swipe, driven by `currentPage + currentPageOffsetFraction` through a `graphicsLayer` scale — GPU only, no relayout per frame (the Portal is API 28) — and stays collapsed on later pages because the fraction saturates at 1.
+- Because the header is drawn *above* the pager it would be a dead zone for the swipe, so it forwards its own horizontal drags to the pager via `dispatchRawDelta` and settles at 25 % of a page width or 600 px/s (`pagerDragForward`). Its reported height follows the visible (scaled) height so the collapsed clock stops eating taps meant for the first row of icons (`collapsingHeight`).
+- Tap/long-press on the clock keep their meaning (HA / quick actions) but only while it is expanded (`collapse < 0.5`).
+- **Masquées** and **Réglages** live in the top bar, right-aligned beside the clock (`LauncherHeaderActions.kt`), and fade in with the swipe so the idle clock screen stays bare. They used to be grid tiles, which took cells meant for apps and looked draggable.
+- The pager locks to the clock page while a panel is open (`userScrollEnabled = !isSplit`), and sitting on any app page arms auto-return like the expanded tray does.
+- **A pause keeps the page when the launcher itself opened something** (an app, a shortcut, Settings, app info, uninstall — `openingFromLauncher`); any other pause, screen-off included, resets to the clock so the panel never wakes up on the grid. Without that split the page snapped home before the launched app even appeared, and coming back landed on the clock instead of where the icon was.
+- Auto-return is frozen while the launcher is not resumed: it exists for an idle *visible* panel, and letting the countdown run behind another app dragged the page home behind the user's back. Coming back re-arms it from zero.
+- Every return to the clock goes through `returnToClockPage`, which launches the scroll in a scope that outlives the caller's effect. Awaiting it inside a `LaunchedEffect` keyed on the trigger stranded the pager mid-scroll — crossing the page midpoint cleared the trigger, the key changed, the effect was cancelled, and a few icons stayed faintly visible over the clock.
+- Page count is derived: every occupied page, plus a trailing empty one **only while an icon is in hand**. That page is how new pages are created (drag an icon onto it) but dead weight otherwise — an extra dot and a swipe into nothing — so it appears with the drag and goes away with it. Dropping back onto an earlier page removes it from under the current page, so the pager clamps back to the last real one.
+- The wallpaper dims a further 45 % across the swipe, and the tray gradient fades out; both alphas are read in the layer phase, so no recomposition per frame.
+- Apps are enumerated **once** off-main with icons pre-rasterized to `ImageBitmap` (`AppListStore`), refreshed through `LauncherApps.Callback` (registered for the activity's whole life, since an uninstall happens while the launcher is paused). The old drawer called `getApplicationIcon()` inside composition — disk I/O on the main thread, invisible behind a fade but a visible stutter inside a pager.
 
-Auto-save happens on page dispose (`SettingsScreen.kt:192-195`).
+### App grid: free placement, menu, pages
+Icons sit at the exact cell they were dropped in — an absolutely-positioned grid, not a lazy list, because holes are the point and pages replace scrolling (`AppGridPage.kt`). Long-press an icon → its menu; keep moving the finger → the menu closes and the icon is picked up. One gesture, arbitrated the way real launchers do it.
 
-### Preferences
-34 keys across a plain store (`portal_launcher`) and an encrypted one (`portal_launcher_secure`). Almost everything numeric is clamped on write (`screenTimeoutMinutes` 1–240, `autoReturnDelaySeconds` 5–60, `bgOverlayOpacity` 0–0.6, `tapThreshold` 2–15, `tempOffset` ±20, clock weight 100–900).
-- 💀 `webConfigPort` — a full callback chain exists (`SettingsActivity.kt:240-246`) but **no UI row calls it**, so the port is effectively fixed at 8080.
-- ⚠️ `adbPort` is the only Int pref with no `coerceIn`, so a malformed web-config POST is stored unclamped.
-- `pillAutoGroupsInitialized` and `deviceId` are internal bookkeeping, not user-facing.
+- **Cells** come from the page size (`gridSpecFor`, min 3×2), so hit-testing is arithmetic: a point maps to a cell with no reported rectangles involved (`cellAt`). Pages report the spec they afford, and placement re-resolves against it.
+- **Nothing is compacted.** `placeItems` only moves an item in two cases: its cell no longer exists (the grid shrank, e.g. on rotation) or two items claim the same one — then it takes the first free cell instead of vanishing or overlapping. A freshly installed app sorts last, so an install never disturbs the arrangement.
+- **A drop on an occupied cell swaps** the two icons. There is no dense order to cascade along under free placement, and refusing the drop would just throw the gesture away.
+- **Cross-page drags**: hold the icon against a page edge for 450 ms and the pager flips (`EDGE_FLIP_*`), which is also how you reach the drag-only empty page and thus create one. The edges are the **pager's viewport**, not a page's rectangle: pages slide, so a scrolled-away page's edges are meaningless — reading one made every position look like "against the right edge" and none like the left, so only forward flips worked. The drag state lives *above* the pager (`GridDragState`) because a page-local one could not survive the flip; the icon is drawn by an overlay in root coordinates, and the page under the icon's centre decides the target cell.
+- The gesture belongs to the page it started on, so it must survive that page moving and being scrolled off: its `pointerInput` is keyed on `page` + `spec` only (keying it on the page's rect rebuilt the node on every flip, ending the drag exactly when it had to continue), the on-page items are read through `rememberUpdatedState`, and while an icon is in hand **every** page stays composed (`beyondViewportPageCount`). A cancel is still treated as a drop, as a last-resort safety net.
+- The hovered cell is outlined from the draw phase, so following the finger costs no recomposition.
+- **Item menu** (`AppContextMenu.kt`): the app's own shortcuts (manifest + dynamic + pinned, max 4), then Renommer / Masquer / Infos de l'application / Désinstaller. A pinned shortcut gets Retirer instead. Uninstall is hidden for system apps and for Portal itself (`ApplicationInfo.FLAG_SYSTEM`).
+- Shortcuts come from `LauncherApps.getShortcuts()`, which **throws unless Portal is the selected home app**. Every call is gated on `hasShortcutHostPermission()`, and when it is false the menu says so rather than looking like an app with no shortcuts.
+- The menu is positioned from its *measured* height (flip above the tile, clamp into the screen, scroll if still too tall). Its panel swallows taps with a raw pointer handler, **not** `clickable`, which would merge the whole panel into one semantics node and hide the rows from TalkBack.
+- Placement lives in `Prefs.appPlacements` (key → page/col/row), renames in `Prefs.appLabels`, hidden items in `Prefs.hiddenApps`. A pre-pages arrangement (`appOrder`) is converted to cells once, so upgrading does not scatter it.
+- Hidden apps come back through the top-bar button — hiding would otherwise be a one-way trip.
+- Icons use `Modifier.nonConsumingClickable`: `appleClickable` consumes the `down`, and a consumed event cancels the container's pending long-press — which silently killed the whole item menu.
 
-### Web config server
-NanoHTTPD, off by default, foreground service with a persistent notification so it can't run hidden — `ConfigServerService.kt:56-60`.
+### Widgets
+Bound through our own `AppWidgetHost` (`WidgetHostController.kt`), added from the surface menu → **Ajouter un widget**.
 
-| Method | Path | Purpose |
-|---|---|---|
-| GET | `/api/settings` | 18 fields; secrets masked as `***set***` |
-| POST | `/api/settings` | only changed fields applied + emitted; 400 on bad JSON / missing body / wrong field type |
-| GET | `/api/status` | HA connected, MQTT connected, IP, device name, presence, app version |
-| POST | `/api/wallpaper` | multipart, 5 MB cap, bitmap-decoded to verify it's an image, sets mode `custom` |
-| DELETE | `/api/wallpaper` | deletes the file, resets mode to `neutral` |
-| GET | `/`, `/index.html` | the self-contained config page |
+- The picker is ours, not `ACTION_APPWIDGET_PICK`: the system one is platform-styled and says nothing about size, and size is what decides whether a widget fits a page at all. Each entry shows its app and its cell footprint.
+- Adding is allocate → bind → configure. `bindAppWidgetIdIfAllowed` first; binding widgets is **not a permission an app can hold**, so when it fails the user is asked through `ACTION_APPWIDGET_BIND`. If the provider declares a `configure` activity it runs before the widget is kept. Every failure path releases the id — a leaked id keeps the provider updating a widget nobody can see.
+- The host listens only between `onStart` and `onStop`: it is a live connection to other processes.
+- An id whose provider is gone (app uninstalled) is dropped and released rather than holding cells with nothing to draw.
+- Widget views are hosted with `AndroidView`, whose factory runs once per node — the view is a connection, not something to rebuild on recomposition.
+- **Multi-cell items** run through the grid model: `GridSpan` + `footprint`, so placement, collision, drag and the drop highlight all work on rectangles. A span wider than the page is clamped; a footprint that no longer fits is re-homed like any out-of-range cell. Icons never land inside a widget.
+- A dragged widget lands **centred on the finger** (`originForCentre`) and is nudged back onto the page, so dropping a wide one near an edge still fits.
+- Resizing is `−`/`+` per axis in the item menu, in whole cells, bounded by the page. A deliberate simplification over a drag-handle frame: the capability is there, the gesture surface is not.
 
-Auth: one shared bearer token (header or `?token=`), compared with `MessageDigest.isEqual`; **every** route including the HTML page requires it (`ConfigServer.kt:24-41`). Token auto-generated on first read, rotatable from Settings.
+### Being the tablet's launcher
+`CATEGORY_HOME` + `singleTask`, plus `stateNotNeeded` / `clearTaskOnLaunch` / `taskAffinity=""` as AOSP Launcher3 declares them. HOME pressed while already home routes through `onNewIntent` and returns to the clock page, closing the menu, the tray and the overlay. `PinShortcutActivity` accepts `ACTION_CONFIRM_PIN_SHORTCUT` headlessly (a wall panel has nobody to confirm a dialog) and rasterizes the icon on the spot, because a `ShortcutInfo`'s icon cannot be resolved again after the request is consumed.
 
-⚠️ Security posture, stated plainly: HTTP only, no TLS, binds all interfaces (not loopback), one shared token with no expiry, `usesCleartextTraffic="true"` in the manifest. Trusted LAN only — do not port-forward. An authenticated client can overwrite the HA token and MQTT password (it can never read them back). Partial-failure note: fields are applied eagerly, so a later invalid field does not roll back earlier ones.
-
-### Standalone activities
-- **ClockThemeActivity** / **OpacityPreviewActivity** — immersive fullscreen editors over the real wallpaper with frozen mock content. ⚠️ Inconsistent persistence: the clock editor writes on every drag tick, the opacity editor debounces to release.
-- **PlaygroundActivity** — reachable only from the home long-press menu, not from Settings. Not Hilt-injected, no `Prefs`. It exercises every custom primitive (`VerticalFillSlider`, `VerticalColorTempSlider`, `VerticalSegmentedSelector`, `VerticalSwitch`, `PinKeypad`, `ThermostatArc`, `WheelPicker`, the vacuum mock, `AccessoryGrid`) and lets you re-skin them all live from one accent swatch — the point being to check theme adaptivity. This is where the component screenshots in the README come from.
-
----
-
-## 8. Overlays, gestures, navigation
-
-### Auto-return
-- **Arms** only for user state: a USER-source panel, the expanded pill tray, or the app/quick-actions overlay — `LauncherActivity.kt:325-328`. An AUTO (media) panel is the resting state and never arms it.
-- After `autoReturnDelaySeconds` a top-centre pill appears with a circular progress ring and a 5-second countdown at ~60 fps — `AutoReturnTimer.kt:26,48-54`, `AutoReturnOverlay.kt`.
-- Every touch anywhere calls `onInteraction()`, which **resets a running countdown but can never arm one** (`AutoReturnTimer.kt:36-39`). The pill's "×" routes through the same call, so it is a reset, not a hard cancel.
-- On expiry: dismisses the panel **only if USER-sourced**, collapses the tray, closes the overlay — `LauncherActivity.kt:330-339`. An AUTO media panel is deliberately spared, because dismissing it would be read as a user dismissal and suppress it for the rest of the session.
+### Back
+Back is always consumed — finishing a home activity gives a black flash while the system restarts it. Innermost surface first: item menu → hidden list → surface menu → USER panel → back to the clock page → nothing (`ui/LauncherBack.kt`, pure and unit-tested). An AUTO (media) panel is deliberately spared, as everywhere else.
 
 ### Overlays
-- **Quick actions / app drawer** — long-press the clock. Blurred backdrop + 40 % scrim, root menu (Réglages / Applications / Composants) and an app grid (4 columns, icons from the package manager, apps re-enumerated on each open). Dismiss by scrim tap or a >120 px downward swipe. Launching an app notifies the presence proxy.
+- **Surface menu** — long-press the clock **or an empty cell of the app grid**: fond d'écran (`ACTION_SET_WALLPAPER` chooser), Réglages, Composants, plus **Définir comme launcher par défaut** (`ACTION_HOME_SETTINGS`) when the home role is missing — offered first, since without it app shortcuts and pin requests cannot work at all. The item menu offers the same fix where the user actually notices the problem.
+- Its backdrop decides whether a tap was outside the panel (both rectangles in root coordinates) instead of relying on the panel to swallow it: overlapping siblings both receive a gesture, consuming it from the panel is dispatch-order dependent, and the `clickable` that used to do it merged the whole panel into one semantics node — hiding every row from TalkBack.
+- **Quick actions** — long-press the clock. Blurred backdrop + 40 % scrim, two entries (Réglages / Composants). Dismiss by scrim tap or a >120 px downward swipe. The app drawer that used to live here is now page 1. Launching an app notifies the presence proxy.
 - **Alert overlay** — raised from MQTT (`sound/play` or `notification`), auto-dismisses after 5 s, restartable; scrim tap dismisses, taps inside are swallowed. Also blurs the whole scene to 16 dp while visible.
 - **Camera overlay** — fires on the trigger sensor's rising edge only (once per activation), refetches the `camera_proxy` snapshot **every 2 s with all Coil caching disabled**, and auto-dismisses 10 s after the trigger clears. Only the × closes it; scrim taps don't.
 
 ### Gestures
-Tap the clock → open HA (1 s debounce). Long-press the clock → quick actions. Tap chip → toggle or panel. Long-press chip → panel (except media). Tap the weather pill → weather panel. Swipe down on the quick-actions panel → dismiss. Swipe horizontally on the artwork → change session. Vertical drag on the custom sliders → brightness / Kelvin / cover position. Drag the thermostat ring → setpoint, committed on release. Every touch also feeds the sleep scheduler and the auto-return reset via `dispatchTouchEvent` (`LauncherActivity.kt:135-141`). No pinch or rotate anywhere.
+Swipe right-to-left anywhere on the home page (clock band included) → app grid; swipe back, or wait for auto-return. Long-press an app icon → its menu; long-press then drag → move it to any free cell, swap with an occupied one, or hold at a page edge to carry it to another page. Tap the clock → open HA (1 s debounce). Long-press the clock → quick actions. Tap chip → toggle or panel. Long-press chip → panel (except media). Tap the weather pill → weather panel. Swipe down on the quick-actions panel → dismiss. Swipe horizontally on the artwork → change session. Vertical drag on the custom sliders → brightness / Kelvin / cover position. Drag the thermostat ring → setpoint, committed on release. Every touch also feeds the sleep scheduler and the auto-return reset via `dispatchTouchEvent` (`LauncherActivity.kt:135-141`). No pinch or rotate anywhere.
 
 `Modifier.appleClickable` is the single tap primitive: rippleless, with a GPU-only press-scale (no recomposition), and long-press consumes the gesture so parents don't also fire — `Interactions.kt:37-64`.
 

@@ -5,4 +5,12 @@
         <item name="android:fontFamily">sans</item>
         <item name="android:colorAccent">#64B5F6</item>
     </style>
+
+    <!-- Pin-shortcut requests are accepted headlessly: no window should ever be seen. -->
+    <style name="Theme.PortalLauncher.Invisible" parent="android:style/Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowNoDisplay">true</item>
+        <item name="android:windowAnimationStyle">@null</item>
+    </style>
 </resources>

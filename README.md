@@ -1,6 +1,6 @@
 # Portal Launcher
 
-**Turn a Meta Portal into a real Home Assistant wall panel.**
+**A real Android launcher that behaves like an appliance — and hands you Home Assistant in one tap.**
 
 <p>
   <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT License">
@@ -11,9 +11,15 @@
   <img src="https://img.shields.io/badge/PRs-welcome-brightgreen" alt="PRs welcome">
 </p>
 
-Meta discontinued the Portal, then left ADB open on it. So a lot of us ended up with a well-built 10" touchscreen, decent speakers, a camera and a pile of ambient sensors — running software that talks to a service that no longer matters.
+A phone app on a wall is still a phone app: a scrolling page of cards, three feet away, lit up at 2am. This is built to be the other thing — an appliance. Dark and still when nobody is near it. One glance tells you what matters. One tap takes you as deep as you want.
 
-Portal Launcher replaces the stock launcher entirely. The device boots into a full-screen clock, wakes into a live Home Assistant dashboard when you walk up to it, and publishes its own sensors back to HA over MQTT. No cloud, no subscription, no vendor — it talks straight to your local HA instance. The UI is deliberately Apple-flavoured: simple, dark, a bit frozen — see [Design](#design).
+That is the experience a smart display gives you out of the box, and what a wall panel usually loses: **anyone in the house can read it at a glance**, without learning a dashboard. No grid of forty tiles, no graphs, no cards to scroll.
+
+**It is a real launcher, not a dashboard app.** It takes the home role and does the whole job — swipeable pages, icons placed exactly where you drop them, widgets, app shortcuts on long-press, back that behaves. Its default screen just happens to be a full-screen clock over your wallpaper instead of a grid of icons. Tap that screen and it opens the app you designate — Home Assistant by default, but it is your choice.
+
+**Home Assistant is the integration, not the requirement.** Point it at your instance and the clock screen grows a row of live controls ranked by what actually matters right now — an unlocked door outranks the living-room lamp, automatically — and the device publishes its own sensors back over MQTT. Skip it and you still have a launcher with a beautiful idle screen.
+
+**It runs on any Android device.** Android 9 and up: a small smart clock, a 10" tablet, a large wall-mounted panel. It was built on a Meta Portal — the name is where it started, not where it runs.
 
 > **Status:** used daily on real hardware, actively developed, rough edges documented below. Not yet on any store — you sideload it with `adb`.
 > **Heads-up:** the UI is currently **French-only**. [i18n is the #1 wanted contribution](#-good-first-issues).
@@ -25,6 +31,7 @@ Portal Launcher replaces the stock launcher entirely. The device boots into a fu
 - [Screenshots](#screenshots)
 - [Design](#design)
 - [Component library](#component-library)
+- [The launcher](#the-launcher)
 - [What it does](#what-it-does)
 - [Supported Home Assistant entities](#supported-home-assistant-entities)
 - [Quick start](#quick-start)
@@ -34,6 +41,7 @@ Portal Launcher replaces the stock launcher entirely. The device boots into a fu
 - [Contributing](#contributing)
 - [Troubleshooting / FAQ](#troubleshooting--faq)
 - [Tech stack](#tech-stack)
+- [Where the name comes from](#where-the-name-comes-from)
 - [Credits](#credits)
 
 ---
@@ -43,6 +51,10 @@ Portal Launcher replaces the stock launcher entirely. The device boots into a fu
 **Idle — clock over your wallpaper, with the three pills that matter.**
 
 ![Clock screen](docs/screenshots/home-clock.jpg)
+
+**Swipe left and the clock shrinks into the top bar — the rest is a real app grid**, icons placed exactly where you drop them, hidden apps and Settings tucked into the top bar instead of eating a tile.
+
+![App grid page](docs/screenshots/apps-grid.png)
 
 **One tap on "Voir plus d'informations" and the full tray unfolds** — openings, temperatures, lights, purifier, scenes, lock, air quality, alarm — ranked by urgency, not by config order.
 
@@ -75,7 +87,7 @@ The reference is Apple, not Home Assistant's own dashboards. Three rules:
 
 - **Simple.** One thing per screen. The idle screen is a clock; the tray shows three pills until you ask for more; a panel controls one device and nothing else. No grids of 40 tiles.
 - **A bit frozen.** Dark, cold, still. True-black OLED background, translucent frosted surfaces over the wallpaper, wide soft radii (28dp panels, 40dp tray), no gradients screaming for attention, no bouncy animation — one spring (damping 0.7, medium stiffness) for everything that moves. The panel slides in, it doesn't pop. State changes fade.
-  <br>Caveat: real Gaussian blur needs API 31 and the Portal runs API 28, so on device the frosted surfaces are translucent fills, not live blur (`ui/theme/DesignTokens.kt`, `blurCompat`).
+  <br>Caveat: real Gaussian blur needs API 31, so on API 28–30 devices (the Portal included) the frosted surfaces are translucent fills, not live blur (`ui/theme/DesignTokens.kt`, `blurCompat`).
 - **The control looks like the thing it controls.** A brightness slider fills with the bulb's actual colour. A colour-temperature slider *is* the Kelvin ramp. A thermostat is a dial with two handles. That's the Apple Home idea, applied per-domain.
 
 Everything is Compose, dark-only for now, with tokens in `ui/theme/DesignTokens.kt`. A [light theme and accent colours](#roadmap) are on the roadmap.
@@ -92,6 +104,23 @@ The panels are built on a set of Apple Home-inspired primitives, each written fr
 | **Selector** — 2..n options, stacked-icon variant, scrollable list variant<br><img src="docs/screenshots/components/selector.png" width="300"> | **Switch** — tall pill toggle, on / icon+text / disabled<br><img src="docs/screenshots/components/switch.png" width="290"> |
 | **Keypad** — dot feedback, letters under digits, shake on a wrong code<br><img src="docs/screenshots/components/keypad.png" width="300"> | **Thermostat dial** — dual setpoint handles, heat / cool / auto<br><img src="docs/screenshots/components/thermostat-dial.png" width="300"> |
 | **Vacuum controls** — big play/pause, clean-mode list, dock action<br><img src="docs/screenshots/components/vacuum-controls.png" width="300"> | |
+
+---
+
+## The launcher
+
+It takes `CATEGORY_HOME` and does the full job, so it can be the only launcher on the device.
+
+- **Pages** — one flat pager: the clock, then as many app pages as you fill. Swipe right-to-left to leave the clock; the clock shrinks into the top bar and stays there, so you never lose the time.
+- **Free placement** — an icon stays in the exact cell you drop it in, holes included. Nothing is auto-arranged, nothing is alphabetised behind your back. Drop on an occupied cell and the two swap.
+- **New pages on demand** — hold an icon against the edge, the page turns under your finger; an empty page appears only while you are dragging, so there is never a dead page to swipe through.
+- **The clock never disappears** — it just shrinks into the top bar once you leave the home page, so you always know what time it is.
+- **Widgets** — bound through the launcher's own `AppWidgetHost`, sized in cells, moved and resized like anything else.
+- **Long-press an icon** — the app's own shortcuts (the ones you get on a phone), rename, hide, app info, uninstall. Long-press empty space for wallpaper and settings.
+- **Tap the clock** — opens the app you chose. Long-press it for the launcher's own menu.
+- **Auto-return** — leave it on an app page and it drifts back to the clock on its own. It is a wall panel; its resting state is the clock, not wherever you left it.
+
+Installed apps that you do not want on the grid can be hidden and brought back from the top bar. Everything — placement, sizes, renames, hidden apps — survives a reboot.
 
 ---
 
@@ -149,7 +178,9 @@ The panels are built on a set of Apple Home-inspired primitives, each written fr
 
 ## Quick start
 
-**You need:** a Meta Portal with ADB reachable, a Home Assistant instance on the same LAN, a long-lived HA access token, and (optional but recommended) an MQTT broker.
+**You need:** any Android 9+ device. For the Home Assistant half: an instance on the same LAN, a long-lived access token, and — optional but recommended — an MQTT broker. Without them you get the launcher and the clock, which is a perfectly good place to start.
+
+Landscape is what it is designed for today; a portrait layout is [on the roadmap](#roadmap).
 
 **1. Build**
 
@@ -161,8 +192,17 @@ The panels are built on a set of Apple Home-inspired primitives, each written fr
 
 ```sh
 adb install -r app/build/outputs/apk/debug/app-debug.apk
+```
+
+Then pick it as your home app. On a normal device: press home and choose it, or Settings → Apps → Default apps → Home app. The launcher also offers the shortcut itself — long-press the clock, "Définir comme launcher par défaut".
+
+On a device with no such screen (a Portal, most AOSP panels):
+
+```sh
 adb shell cmd package set-home-activity com.iblu01.portallauncher/.LauncherActivity
 ```
+
+Being the selected home app is not cosmetic: app shortcuts and widget pinning only work for the real launcher.
 
 **3. Grant the optional extras**
 
@@ -242,6 +282,10 @@ Legend: ✅ shipped · 🔨 in progress · ⬜ open · 🙋 **good first issue /
 - [x] Alarm keypad — masked digits, variable-length codes, shake on a wrong code (inferred, since HA reports nothing)
 - [x] First-run setup wizard — mDNS instance discovery → token → verify (`ui/screens/SetupWizard.kt`)
 - [x] Dead-code purge (legacy widget subsystem, orphaned overlays)
+- [x] Real launcher surface — swipeable pages, free cell placement, cross-page drag
+- [x] Widgets via the launcher's own `AppWidgetHost` — pick, place, move, resize, remove
+- [x] Long-press menus — app shortcuts, rename, hide, app info, uninstall
+- [x] Home-role plumbing — back handling, pin-shortcut requests, wallpaper picker, default-home prompt
 
 ### 🔨 Now
 
@@ -343,7 +387,13 @@ The accessibility service isn't enabled. Grant `WRITE_SECURE_SETTINGS` and the a
 Yes. You lose the published sensors and the HA-side device, not the dashboard.
 
 **Is it locked to Meta Portal?**
-No, it's a normal Android 28+ launcher — but the layout is built for a landscape 10" display, and the presence proxy relies on Portal's dream/sleep behaviour. See the [portrait/adaptive roadmap item](#roadmap).
+No. It is a normal Android 9+ launcher and runs on any Android device — the name is just where the project started. Two caveats: the layout is built for a landscape display (portrait is [on the roadmap](#roadmap)), and the presence proxy infers occupancy from the Portal's dream/sleep lifecycle, so on other hardware you get the launcher and the dashboard but not that particular trick.
+
+**Do I need Home Assistant?**
+No. Without it you have a launcher with a full-screen clock and your wallpaper. HA is what makes the clock screen show live state and controls.
+
+**What does tapping the home screen open?**
+Whatever you point it at — Settings → Application → "Tap sur l'écran d'accueil". Home Assistant is the default, not a hard-coded destination.
 
 ---
 
@@ -365,9 +415,17 @@ No, it's a normal Android 28+ launcher — but the layout is built for a landsca
 
 ---
 
+## Where the name comes from
+
+Meta discontinued the Portal and left ADB open on it, so a pile of well-built 10" touchscreens with decent speakers and ambient sensors ended up running software that talks to a service nobody uses. That is where this started, and it is why the baseline is API 28 and landscape.
+
+The device it was born on is not the point any more. Anything running Android 9 or later can be the appliance: the same launcher on a smart clock, a tablet or a wall-mounted panel.
+
+---
+
 ## Credits
 
-Standing on community work that made Portal smart-home dashboards possible:
+Standing on community work that made this possible:
 
 - **[portal-ha-bridge](https://github.com/RoadRunner-1024/portal-ha-bridge)** — MQTT bridge concepts behind the HA ↔ Portal integration layer
 - **[Immortal](https://github.com/starbrightlab/immortal)** — presence proxy model and screen-off strategy that made power management practical here

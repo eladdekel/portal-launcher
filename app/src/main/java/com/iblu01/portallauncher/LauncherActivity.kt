@@ -6,12 +6,15 @@ import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.os.Bundle
+import android.appwidget.AppWidgetManager
 import android.os.Environment
+import android.provider.Settings
 import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
 import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
@@ -26,18 +29,23 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.unit.dp
@@ -48,7 +56,9 @@ import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
+import com.iblu01.portallauncher.ui.BackAction
 import com.iblu01.portallauncher.ui.CallService
+import com.iblu01.portallauncher.ui.backAction
 import com.iblu01.portallauncher.ui.LauncherViewModel
 import com.iblu01.portallauncher.ui.LocalAreas
 import com.iblu01.portallauncher.ui.LocalCallService
@@ -64,13 +74,39 @@ import com.iblu01.portallauncher.ui.model.PanelKind
 import com.iblu01.portallauncher.ui.panel.PanelEvent
 import com.iblu01.portallauncher.ui.panel.PanelSource
 import com.iblu01.portallauncher.ui.panel.PanelRequest
+import com.iblu01.portallauncher.ui.apps.AppListStore
+import com.iblu01.portallauncher.ui.apps.AppShortcut
+import com.iblu01.portallauncher.ui.apps.GridItem
+import com.iblu01.portallauncher.ui.apps.GridSpan
+import com.iblu01.portallauncher.ui.apps.GridSpec
+import com.iblu01.portallauncher.ui.apps.appPageCount
+import com.iblu01.portallauncher.ui.apps.placeItems
+import com.iblu01.portallauncher.ui.apps.LauncherAppsFacade
+import com.iblu01.portallauncher.ui.apps.LauncherLayoutStore
+import com.iblu01.portallauncher.ui.apps.ShortcutIconStore
+import com.iblu01.portallauncher.ui.apps.WidgetHostController
+import com.iblu01.portallauncher.ui.apps.WidgetOffer
 import com.iblu01.portallauncher.ui.components.AlertOverlay
 import com.iblu01.portallauncher.ui.components.AmbientBackground
-import com.iblu01.portallauncher.ui.components.AppEntry
+import com.iblu01.portallauncher.ui.components.AppContextMenu
+import com.iblu01.portallauncher.ui.components.AppMenuTarget
+import com.iblu01.portallauncher.ui.components.AppGridPage
+import com.iblu01.portallauncher.ui.components.DraggedIconOverlay
+import com.iblu01.portallauncher.ui.components.LauncherHeaderActions
+import com.iblu01.portallauncher.ui.components.WidgetPickerDialog
+import com.iblu01.portallauncher.ui.components.rememberGridDragState
+import com.iblu01.portallauncher.ui.components.returnToClockPage
 import com.iblu01.portallauncher.ui.components.AutoReturnOverlay
 import com.iblu01.portallauncher.ui.components.CameraOverlay
 import com.iblu01.portallauncher.ui.components.ChipActionsPanel
-import com.iblu01.portallauncher.ui.components.ClockScreen
+import com.iblu01.portallauncher.ui.components.ClockHeader
+import com.iblu01.portallauncher.ui.components.HiddenAppsDialog
+import com.iblu01.portallauncher.ui.components.ClockTray
+import com.iblu01.portallauncher.ui.components.LauncherPager
+import com.iblu01.portallauncher.ui.components.PAGE_CLOCK
+import com.iblu01.portallauncher.ui.components.PAGE_FIRST_APP
+import com.iblu01.portallauncher.ui.components.collapseFraction
+import com.iblu01.portallauncher.ui.components.rememberLauncherPagerState
 import com.iblu01.portallauncher.ui.components.MediaPlayerView
 import com.iblu01.portallauncher.ui.components.PanelContent
 import com.iblu01.portallauncher.ui.components.PresenceIndicator
@@ -79,9 +115,10 @@ import com.iblu01.portallauncher.ui.components.WeatherController
 import com.iblu01.portallauncher.ui.components.WeatherPanel
 import com.iblu01.portallauncher.ui.theme.PortalTheme
 import com.iblu01.portallauncher.ui.theme.blurCompat
-import java.io.File
-import java.util.Locale
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @AndroidEntryPoint
 class LauncherActivity : ComponentActivity() {
@@ -89,6 +126,21 @@ class LauncherActivity : ComponentActivity() {
     @Inject lateinit var pills: PillRepository
     private var lastLaunchMs = 0L
     private lateinit var autoReturnTimer: AutoReturnTimer
+    private lateinit var appList: AppListStore
+    private lateinit var layout: LauncherLayoutStore
+    private lateinit var launcherApps: LauncherAppsFacade
+    private lateinit var widgets: WidgetHostController
+    /** Widget id waiting for the bind-consent or configure activity to come back. */
+    private var pendingWidgetId = GridItem.NO_WIDGET
+    /** Bumped on every HOME press while already home, so the UI can go back to its resting state. */
+    private var homePresses by mutableStateOf(0)
+    /**
+     * True while the pause we are heading into was caused by the user opening something from the
+     * launcher. Screen-off and every other pause resets the pager to the clock (a wall panel must
+     * not wake up on the app grid); a launch must not, or the page snaps back before the app even
+     * appears and coming back lands on the clock instead of where the icon was.
+     */
+    private var openingFromLauncher = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -96,6 +148,13 @@ class LauncherActivity : ComponentActivity() {
         applyPowerPolicy()
 
         autoReturnTimer = AutoReturnTimer(lifecycleScope, prefs)
+        launcherApps = LauncherAppsFacade(applicationContext)
+        appList = AppListStore(applicationContext, lifecycleScope, launcherApps)
+        layout = LauncherLayoutStore(prefs, ShortcutIconStore(applicationContext), lifecycleScope)
+        widgets = WidgetHostController(applicationContext, prefs, lifecycleScope)
+        // Registered for the activity's whole life, not per-resume: an uninstall happens while the
+        // launcher is paused, and re-registering on resume would miss the change.
+        appList.start()
 
         setContent {
             PortalTheme {
@@ -103,20 +162,70 @@ class LauncherActivity : ComponentActivity() {
                     prefs = prefs,
                     pills = pills,
                     autoReturnTimer = autoReturnTimer,
+                    appList = appList,
+                    layout = layout,
+                    launcherApps = launcherApps,
+                    widgets = widgets,
+                    homePresses = homePresses,
                     onOpenHomeAssistant = ::openHomeAssistant,
-                    onOpenSettings = { startActivity(Intent(this, SettingsActivity::class.java)) },
-                    onOpenPlayground = { startActivity(Intent(this, PlaygroundActivity::class.java)) },
-                    loadApps = ::launchableApps,
-                    onLaunchApp = ::launchApp
+                    onOpenSettings = { openFromLauncher(Intent(this, SettingsActivity::class.java)) },
+                    onOpenPlayground = { openFromLauncher(Intent(this, PlaygroundActivity::class.java)) },
+                    onLaunchItem = ::launchItem,
+                    onAppInfo = ::openAppInfo,
+                    onUninstall = ::uninstallApp,
+                    onStartShortcut = ::startShortcut,
+                    onOpenHomeSettings = ::openHomeSettings,
+                    onSetWallpaper = ::setWallpaper,
+                    onAddWidget = ::addWidget,
+                    onRemoveWidget = { widgets.release(it) },
+                    keepPageAcrossPause = ::keepPageAcrossPause,
                 )
             }
         }
         requestLocationPermissionIfNeeded()
     }
 
+    /**
+     * HOME pressed while the launcher is already in front. `singleTask` routes that here instead of
+     * recreating the activity, and a launcher is expected to return to its resting screen.
+     */
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        homePresses++
+    }
+
+    /** Consulted by the UI on `ON_PAUSE`: keep the current page, or fall back to the clock. */
+    private fun keepPageAcrossPause(): Boolean = openingFromLauncher
+
+    private fun openFromLauncher(intent: Intent) {
+        openingFromLauncher = true
+        runCatching { startActivity(intent) }.onFailure { openingFromLauncher = false }
+    }
+
+    private fun startShortcut(packageName: String, shortcutId: String) {
+        openingFromLauncher = true
+        DeviceStateHub.noteLaunchingApp(packageName, this)
+        launcherApps.startShortcut(packageName, shortcutId)
+    }
+
+    override fun onStart() {
+        super.onStart()
+        // The host is a live connection to other processes: listen only while we are on screen.
+        widgets.startListening()
+    }
+
+    override fun onStop() {
+        widgets.stopListening()
+        super.onStop()
+    }
+
     override fun onResume() {
         super.onResume()
+        openingFromLauncher = false
+        widgets.reload()
         pills.start(prefs)
+        // PinShortcutActivity writes pinned shortcuts straight to prefs, behind the store's back.
+        layout.reload()
         applyPowerPolicy()
         DeviceStateHub.onLauncherForeground(true, this)
         enableImmersive()
@@ -125,6 +234,11 @@ class LauncherActivity : ComponentActivity() {
     override fun onPause() {
         DeviceStateHub.onLauncherForeground(false, this)
         super.onPause()
+    }
+
+    override fun onDestroy() {
+        appList.stop()
+        super.onDestroy()
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
@@ -157,35 +271,98 @@ class LauncherActivity : ComponentActivity() {
         val intent = packageManager.getLaunchIntentForPackage(pkg)
         if (intent == null) {
             Toast.makeText(this, "Application introuvable: $pkg", Toast.LENGTH_LONG).show()
-            startActivity(Intent(this, SettingsActivity::class.java))
+            openFromLauncher(Intent(this, SettingsActivity::class.java))
             return
         }
         DeviceStateHub.noteLaunchingApp(pkg, this)
-        startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT))
+        openFromLauncher(intent.addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT))
     }
 
-    private fun launchApp(app: AppEntry) {
-        val intent = Intent(Intent.ACTION_MAIN)
-            .addCategory(Intent.CATEGORY_LAUNCHER)
-            .setClassName(app.packageName, app.activityName)
-            .addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
-        DeviceStateHub.noteLaunchingApp(app.packageName, this)
-        startActivity(intent)
+    /** Launches a grid tile: a pinned shortcut goes through LauncherApps, an app through an intent. */
+    private fun launchItem(item: GridItem) {
+        if (item.isShortcut) {
+            startShortcut(item.packageName, item.shortcutId)
+            return
+        }
+        DeviceStateHub.noteLaunchingApp(item.packageName, this)
+        val intent = LauncherAppsFacade.launchIntent(this, item.packageName, item.activityName)
+        if (intent == null) {
+            Toast.makeText(this, "Application introuvable : ${item.label}", Toast.LENGTH_SHORT).show()
+            return
+        }
+        openingFromLauncher = true
+        runCatching { startActivity(intent) }.onFailure {
+            openingFromLauncher = false
+            Toast.makeText(this, "Impossible d’ouvrir ${item.label}", Toast.LENGTH_SHORT).show()
+        }
     }
 
-    private fun launchableApps(): List<AppEntry> {
-        val intent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
-        return packageManager.queryIntentActivities(intent, 0)
-            .filter { it.activityInfo?.packageName != packageName }
-            .sortedBy { it.loadLabel(packageManager).toString().lowercase(Locale.getDefault()) }
-            .mapNotNull { info ->
-                val ai = info.activityInfo ?: return@mapNotNull null
-                AppEntry(
-                    label = info.loadLabel(packageManager).toString(),
-                    packageName = ai.packageName,
-                    activityName = ai.name
-                )
+    /** The system's home-app chooser. Without the home role, shortcuts and pinning cannot work. */
+    private fun openHomeSettings() {
+        openFromLauncher(Intent(Settings.ACTION_HOME_SETTINGS))
+    }
+
+    private fun setWallpaper() {
+        openFromLauncher(
+            Intent.createChooser(Intent(Intent.ACTION_SET_WALLPAPER), "Choisir un fond d’écran")
+        )
+    }
+
+    /**
+     * Adds a widget: allocate an id, bind it (asking the user when the launcher may not bind on its
+     * own), then run the provider's configuration screen if it demands one. Every failure path
+     * releases the id — a leaked id keeps the provider updating a widget nobody can see.
+     */
+    private fun addWidget(offer: WidgetOffer) {
+        val id = widgets.allocateId()
+        pendingWidgetId = id
+        if (!widgets.bindIfAllowed(id, offer.provider)) {
+            openingFromLauncher = true
+            runCatching {
+                startActivityForResult(widgets.bindConsentIntent(id, offer.provider), REQ_WIDGET_BIND)
+            }.onFailure {
+                openingFromLauncher = false
+                widgets.release(id)
+                pendingWidgetId = GridItem.NO_WIDGET
             }
+            return
+        }
+        configureOrKeepWidget(id)
+    }
+
+    private fun configureOrKeepWidget(widgetId: Int) {
+        if (widgets.needsConfigure(widgetId)) {
+            openingFromLauncher = true
+            widgets.startConfigure(this, widgetId, REQ_WIDGET_CONFIGURE)
+            return
+        }
+        widgets.keep(widgetId)
+        pendingWidgetId = GridItem.NO_WIDGET
+    }
+
+    @Deprecated("Widget bind/configure predate the result APIs and still use request codes.")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != REQ_WIDGET_BIND && requestCode != REQ_WIDGET_CONFIGURE) return
+        val id = data?.getIntExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, pendingWidgetId)
+            ?: pendingWidgetId
+        if (resultCode != RESULT_OK || id == GridItem.NO_WIDGET) {
+            widgets.release(id)
+            pendingWidgetId = GridItem.NO_WIDGET
+            return
+        }
+        if (requestCode == REQ_WIDGET_BIND) configureOrKeepWidget(id) else {
+            widgets.keep(id)
+            pendingWidgetId = GridItem.NO_WIDGET
+        }
+    }
+
+    private fun openAppInfo(packageName: String) {
+        openFromLauncher(LauncherAppsFacade.appInfoIntent(packageName))
+    }
+
+    private fun uninstallApp(packageName: String) {
+        openFromLauncher(LauncherAppsFacade.uninstallIntent(packageName))
     }
 
     private fun requestLocationPermissionIfNeeded() {
@@ -195,6 +372,11 @@ class LauncherActivity : ComponentActivity() {
         ) {
             requestPermissions(arrayOf(android.Manifest.permission.ACCESS_COARSE_LOCATION), 2)
         }
+    }
+
+    private companion object {
+        const val REQ_WIDGET_BIND = 4101
+        const val REQ_WIDGET_CONFIGURE = 4102
     }
 
     @Suppress("DEPRECATION")
@@ -209,6 +391,9 @@ class LauncherActivity : ComponentActivity() {
     }
 }
 
+/** Extra wallpaper dimming once the app grid is fully in view. */
+private const val APPS_PAGE_SCRIM = 0.45f
+
 /**
  * The whole launcher UI: ambient clock, floating widget tray, and the long-press
  * quick-actions overlay. All Android side-effects are injected as lambdas so this
@@ -219,11 +404,23 @@ private fun PortalLauncherApp(
     prefs: Prefs,
     pills: PillRepository,
     autoReturnTimer: AutoReturnTimer,
+    appList: AppListStore,
+    layout: LauncherLayoutStore,
+    launcherApps: LauncherAppsFacade,
+    widgets: WidgetHostController,
+    homePresses: Int,
     onOpenHomeAssistant: () -> Unit,
     onOpenSettings: () -> Unit,
     onOpenPlayground: () -> Unit,
-    loadApps: () -> List<AppEntry>,
-    onLaunchApp: (AppEntry) -> Unit,
+    onLaunchItem: (GridItem) -> Unit,
+    onAppInfo: (String) -> Unit,
+    onUninstall: (String) -> Unit,
+    onStartShortcut: (packageName: String, shortcutId: String) -> Unit,
+    onOpenHomeSettings: () -> Unit,
+    onSetWallpaper: () -> Unit,
+    onAddWidget: (WidgetOffer) -> Unit,
+    onRemoveWidget: (Int) -> Unit,
+    keepPageAcrossPause: () -> Boolean,
 ) {
     val lifecycleOwner = LocalLifecycleOwner.current
     var backgroundMode by remember { mutableStateOf(prefs.backgroundMode) }
@@ -232,7 +429,30 @@ private fun PortalLauncherApp(
     // Bumped on every "backgroundMode" emission (even custom->custom) so CustomWallpaper
     // re-reads the file's lastModified() and Coil busts its stale cache on replacement.
     var wallpaperVersion by remember { mutableStateOf(0) }
+    // Auto-return is about an *idle, visible* panel. While another app is in front, the launcher is
+    // not idle — letting the countdown run there would drag the page home behind the user's back.
+    var resumed by remember { mutableStateOf(true) }
     val context = LocalContext.current
+    // Grid geometry is discovered by the pages themselves (they know their size); until the first
+    // layout a sane default keeps placement resolvable.
+    val gridSpecState = remember { mutableStateOf(GridSpec(4, 3)) }
+    val gridDrag = rememberGridDragState()
+    val pagerScope = rememberCoroutineScope()
+    // The grid, resolved once and read by every page. `derivedStateOf` rather than plain vals so
+    // the pager's pageCount lambda keeps reading live state instead of a captured snapshot.
+    val gridItemsState =
+        remember(layout) { layout.items(appList.apps, widgets.items) }.collectAsStateWithLifecycle()
+    val hiddenItemsState = remember(layout) { layout.hiddenItems(appList.apps) }.collectAsStateWithLifecycle()
+    val storedCellsState = layout.storedCells.collectAsStateWithLifecycle()
+    val placedItems = remember(layout) {
+        derivedStateOf { placeItems(gridItemsState.value, storedCellsState.value, gridSpecState.value) }
+    }
+    // The growth page only exists while an icon is in hand; `isDragging` is state, so the pager's
+    // page count follows the drag.
+    val appPages = remember {
+        derivedStateOf { appPageCount(placedItems.value, spare = gridDrag.isDragging) }
+    }
+    val pagerState = rememberLauncherPagerState { appPages.value }
 
     LaunchedEffect(Unit) {
         SettingsChangeBus.get().changes.collect { key ->
@@ -251,9 +471,16 @@ private fun PortalLauncherApp(
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
+                resumed = true
                 backgroundMode = prefs.backgroundMode
                 bgOverlayOpacity = prefs.bgOverlayOpacity
                 clockTheme = prefs.clockTheme
+            }
+            // Never *wake* on the app grid — but a pause caused by opening an app must keep the
+            // page, or it snaps back before the app appears and coming back lands on the clock.
+            if (event == Lifecycle.Event.ON_PAUSE) resumed = false
+            if (event == Lifecycle.Event.ON_PAUSE && !keepPageAcrossPause()) {
+                pagerScope.launch { pagerState.scrollToPage(PAGE_CLOCK) }
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -310,8 +537,28 @@ private fun PortalLauncherApp(
         onDispose { weatherController.stop() }
     }
     var overlayVisible by remember { mutableStateOf(false) }
-    var apps by remember { mutableStateOf(emptyList<AppEntry>()) }
     var pillsExpanded by remember { mutableStateOf(false) }
+    // Long-press menu of the app grid: which tile, and its shortcuts (queried lazily, off-main).
+    var menuTarget by remember { mutableStateOf<AppMenuTarget?>(null) }
+    var menuShortcuts by remember { mutableStateOf(emptyList<AppShortcut>()) }
+    var appDragActive by remember { mutableStateOf(false) }
+    var showHidden by remember { mutableStateOf(false) }
+    // Non-null means the picker is open; the list itself is enumerated off-main on demand.
+    var widgetOffers by remember { mutableStateOf<List<WidgetOffer>?>(null) }
+    var widgetPickerRequested by remember { mutableStateOf(false) }
+    LaunchedEffect(widgetPickerRequested) {
+        if (!widgetPickerRequested) return@LaunchedEffect
+        widgetOffers = withContext(Dispatchers.IO) { widgets.offers() }
+    }
+    val hiddenItems = hiddenItemsState.value
+    LaunchedEffect(menuTarget?.item?.key) {
+        val target = menuTarget
+        menuShortcuts = emptyList()
+        if (target == null || target.item.isShortcut) return@LaunchedEffect
+        menuShortcuts = withContext(Dispatchers.IO) {
+            launcherApps.shortcutsFor(target.item.packageName).take(4)
+        }
+    }
 
     // Side panel state lives in the reducer (VM, step 6). Media auto-open/stop is driven by the
     // media flow; user taps dispatch PanelEvents. Panel no longer closes on chip disappearance —
@@ -322,9 +569,13 @@ private fun PortalLauncherApp(
 
     // Auto-return is for *user* state only: a USER panel, the expanded tray, the app overlay. An
     // AUTO (media) panel is the resting state while something plays, so it must not arm the timer.
-    LaunchedEffect(panel.request, panel.source, pillsExpanded, overlayVisible) {
+    // Sitting on the apps page is user state too, exactly like the expanded tray: the wall panel
+    // must fall back to the clock on its own.
+    val onAppsPage = pagerState.currentPage != PAGE_CLOCK
+    val userState = pillsExpanded || overlayVisible || onAppsPage || menuTarget != null || showHidden
+    LaunchedEffect(panel.request, panel.source, userState, resumed) {
         val userPanelOpen = panel.request != null && panel.source == PanelSource.USER
-        if (userPanelOpen || pillsExpanded || overlayVisible) autoReturnTimer.start() else autoReturnTimer.stop()
+        if (resumed && (userPanelOpen || userState)) autoReturnTimer.start() else autoReturnTimer.stop()
     }
 
     LaunchedEffect(autoReturnState.shouldReturn) {
@@ -334,6 +585,12 @@ private fun PortalLauncherApp(
             if (panel.request != null && panel.source == PanelSource.USER) vm.onEvent(PanelEvent.Dismiss)
             if (pillsExpanded) pillsExpanded = false
             if (overlayVisible) overlayVisible = false
+            if (menuTarget != null) menuTarget = null
+            if (showHidden) showHidden = false
+            // Deliberately not awaited here: `stop()` below (and the arming effect, once the page
+            // midpoint is crossed) clears `shouldReturn`, which would cancel this very effect and
+            // strand the pager mid-scroll.
+            if (pagerState.currentPage != PAGE_CLOCK) returnToClockPage(pagerScope, pagerState)
             autoReturnTimer.stop()
         }
     }
@@ -350,6 +607,52 @@ private fun PortalLauncherApp(
         null -> null
     }
     val isSplit = panelContent != null
+    // A panel takes a third of the screen; an app grid in the remaining two thirds is unusable, so
+    // the pager goes back to the clock page and locks while a panel is open.
+    LaunchedEffect(isSplit) {
+        // Same reason as auto-return: the panel can resolve away mid-scroll, cancelling this effect
+        // and stranding the pager between pages.
+        if (isSplit && pagerState.currentPage != PAGE_CLOCK) returnToClockPage(pagerScope, pagerState)
+    }
+    // Dropping an icon back onto an earlier page removes the growth page from under our feet.
+    LaunchedEffect(appPages.value) {
+        val lastPage = PAGE_FIRST_APP + appPages.value - 1
+        if (pagerState.currentPage > lastPage) pagerState.animateScrollToPage(page = lastPage)
+    }
+    // Back never escapes the launcher: finishing a home activity gives a black flash while the
+    // system restarts it. Innermost surface first, then the page, then nothing.
+    BackHandler(enabled = true) {
+        when (
+            backAction(
+                itemMenuOpen = menuTarget != null,
+                hiddenListOpen = showHidden,
+                widgetPickerOpen = widgetPickerRequested,
+                quickActionsOpen = overlayVisible,
+                userPanelOpen = panel.request != null && panel.source == PanelSource.USER,
+                onClockPage = pagerState.currentPage == PAGE_CLOCK,
+            )
+        ) {
+            BackAction.CloseItemMenu -> menuTarget = null
+            BackAction.CloseHiddenList -> showHidden = false
+            BackAction.CloseWidgetPicker -> {
+                widgetPickerRequested = false
+                widgetOffers = null
+            }
+            BackAction.CloseQuickActions -> overlayVisible = false
+            BackAction.DismissPanel -> vm.onEvent(PanelEvent.Dismiss)
+            BackAction.GoToClockPage -> returnToClockPage(pagerScope, pagerState)
+            BackAction.Nothing -> Unit
+        }
+    }
+
+    // HOME pressed while already home: back to the resting screen, like any launcher.
+    LaunchedEffect(homePresses) {
+        menuTarget = null
+        showHidden = false
+        overlayVisible = false
+        pillsExpanded = false
+        if (pagerState.currentPage != PAGE_CLOCK) returnToClockPage(pagerScope, pagerState)
+    }
     // Remembered so it stays the same instance across the recompositions every HA push triggers
     // (unstable-param skip guard for the open panel, e.g. the alarm keypad — removed at step 10).
     val onPanelDismiss: () -> Unit = remember(vm) { { vm.onEvent(PanelEvent.Dismiss) } }
@@ -391,10 +694,6 @@ private fun PortalLauncherApp(
         animationSpec = tween(450),
         label = "bottomGradientHeight"
     )
-
-    LaunchedEffect(overlayVisible) {
-        if (overlayVisible) apps = loadApps()
-    }
 
     var cameraOverlay by remember { mutableStateOf<CameraPair?>(null) }
     val prevCameraOn = remember { HashMap<String, Boolean>() }
@@ -469,11 +768,23 @@ private fun PortalLauncherApp(
                 )
             }
 
+            // Swiping to the app grid dims the wallpaper further, so the icons keep their contrast
+            // whatever the photo is. Alpha is read in the layer phase — no recomposition per frame.
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .graphicsLayer { alpha = pagerState.collapseFraction() }
+                    .background(Color.Black.copy(alpha = APPS_PAGE_SCRIM))
+            )
+
             Box(
                 Modifier
                     .align(Alignment.BottomCenter)
                     .fillMaxWidth()
                     .height(bottomGradientHeight)
+                    // Read in the layer phase, not in composition: the swipe fades the tray
+                    // gradient out without recomposing the launcher on every frame.
+                    .graphicsLayer { alpha = 1f - pagerState.collapseFraction() }
                     .background(
                         Brush.verticalGradient(
                             colorStops = arrayOf(
@@ -497,24 +808,86 @@ private fun PortalLauncherApp(
                 label = "leftWidthFraction"
             )
 
+            // Page 0 = clock + chip tray, page 1 = the app grid. The clock header lives above both
+            // (LauncherPager) and shrinks as the swipe progresses.
             val clockScreen: @Composable () -> Unit = {
-                ClockScreen(
-                    backgroundMode = backgroundMode,
-                    weather = weather,
-                    temperatures = temperatures,
-                    chips = visibleChips,
-                    onTap = onOpenHomeAssistant,
-                    onLongPress = { overlayVisible = true },
-                    pillsExpanded = pillsExpanded,
-                    onPillsExpandedChange = { pillsExpanded = it },
-                    onChipClick = onChipClick,
-                    onChipLongPress = onChipLongPress,
-                    selectedChipKey = selectedChipKey,
-                    onWeatherClick = { vm.onEvent(PanelEvent.WeatherTap) },
-                    connected = haConnected,
-                    lastUpdateAt = haLastUpdateAt,
-                    drawBackground = false,
-                    clockTheme = clockTheme,
+                LauncherPager(
+                    state = pagerState,
+                    // Dragging an icon must not also swipe the page out from under it.
+                    userScrollEnabled = !isSplit && !appDragActive,
+                    onHeaderTap = onOpenHomeAssistant,
+                    onHeaderLongPress = { overlayVisible = true },
+                    header = { collapse ->
+                        ClockHeader(
+                            weather = weather,
+                            temperatures = temperatures,
+                            onWeatherClick = { vm.onEvent(PanelEvent.WeatherTap) },
+                            connected = haConnected,
+                            lastUpdateAt = haLastUpdateAt,
+                            clockTheme = clockTheme,
+                            collapse = collapse,
+                        )
+                    },
+                    clockPage = {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .pointerInput(Unit) {
+                                    detectTapGestures(
+                                        onTap = { onOpenHomeAssistant() },
+                                        onLongPress = { overlayVisible = true },
+                                    )
+                                }
+                        ) {
+                            ClockTray(
+                                chips = visibleChips,
+                                pillsExpanded = pillsExpanded,
+                                onPillsExpandedChange = { pillsExpanded = it },
+                                onChipClick = onChipClick,
+                                onChipLongPress = onChipLongPress,
+                                selectedChipKey = selectedChipKey,
+                                modifier = Modifier.align(Alignment.BottomCenter),
+                            )
+                        }
+                    },
+                    appPage = { page, appear ->
+                        AppGridPage(
+                            page = page,
+                            items = placedItems.value,
+                            spec = gridSpecState.value,
+                            drag = gridDrag,
+                            onLaunch = onLaunchItem,
+                            onLongPress = { item, span, anchor ->
+                                menuTarget = AppMenuTarget(item, anchor, span)
+                            },
+                            onPickUp = { menuTarget = null; appDragActive = true },
+                            onLongPressEmpty = { overlayVisible = true },
+                            onDrop = { key, placement ->
+                                appDragActive = false
+                                if (placement != null) layout.place(key, placement.cell, placement.span)
+                            },
+                            widgetView = widgets::createView,
+                            onSpec = { spec ->
+                                gridSpecState.value = spec
+                                layout.lastKnownSpec = spec
+                                layout.seedFromLegacyOrder(spec)
+                            },
+                            onCellSize = { widthDp, heightDp ->
+                                widgets.cellWidthDp = widthDp
+                                widgets.cellHeightDp = heightDp
+                            },
+                            appear = appear,
+                        )
+                    },
+                    headerActions = {
+                        LauncherHeaderActions(
+                            hiddenCount = hiddenItems.size,
+                            onShowHidden = { showHidden = true },
+                            onSettings = onOpenSettings,
+                        )
+                    },
+                    dragOverlay = { DraggedIconOverlay(gridDrag) },
+                    drag = gridDrag,
                 )
             }
 
@@ -564,11 +937,60 @@ private fun PortalLauncherApp(
 
         QuickActionsOverlay(
             visible = overlayVisible,
-            apps = apps,
             onDismiss = { overlayVisible = false },
             onSettings = onOpenSettings,
             onOpenPlayground = onOpenPlayground,
-            onLaunchApp = { app -> overlayVisible = false; onLaunchApp(app) }
+            onSetWallpaper = onSetWallpaper,
+            onOpenHomeSettings = onOpenHomeSettings,
+            onAddWidget = { widgetPickerRequested = true },
+            isDefaultHome = launcherApps.isDefaultHome,
+        )
+
+        WidgetPickerDialog(
+            offers = widgetOffers.takeIf { widgetPickerRequested },
+            onPick = { offer ->
+                widgetPickerRequested = false
+                widgetOffers = null
+                onAddWidget(offer)
+            },
+            onDismiss = { widgetPickerRequested = false; widgetOffers = null },
+        )
+
+        // Above everything, and outside the pager, so it is never clipped by a page's bounds.
+        AppContextMenu(
+            target = menuTarget,
+            shortcuts = menuShortcuts,
+            canUninstall = menuTarget?.item?.let { launcherApps.canUninstall(it.packageName) } == true,
+            isDefaultHome = launcherApps.isDefaultHome,
+            onDismiss = { menuTarget = null },
+            onShortcut = { onStartShortcut(it.packageName, it.id) },
+            onRename = { label ->
+                menuTarget?.item?.let { item ->
+                    layout.rename(item.key, label, defaultLabel = item.defaultLabel)
+                }
+            },
+            onHide = { menuTarget?.item?.let { layout.hide(it.key) } },
+            onAppInfo = { menuTarget?.item?.let { onAppInfo(it.packageName) } },
+            onUninstall = { menuTarget?.item?.let { onUninstall(it.packageName) } },
+            onRemoveShortcut = { menuTarget?.item?.let { layout.removeShortcut(it.key) } },
+            onOpenHomeSettings = onOpenHomeSettings,
+            onResize = { span -> menuTarget?.let { target ->
+                layout.resize(target.item.key, span)
+                menuTarget = target.copy(span = span)
+            } },
+            onRemoveWidget = {
+                menuTarget?.item?.let { item ->
+                    layout.forget(item.key)
+                    onRemoveWidget(item.widgetId)
+                }
+            },
+            maxSpan = GridSpan(gridSpecState.value.columns, gridSpecState.value.rows),
+        )
+
+        HiddenAppsDialog(
+            items = hiddenItems.takeIf { showHidden },
+            onRestore = { layout.unhide(it.key) },
+            onDismiss = { showHidden = false },
         )
 
         AlertOverlay(

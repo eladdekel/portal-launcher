@@ -1,8 +1,12 @@
 package com.iblu01.portallauncher.ui.components
 
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.PressInteraction
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -36,6 +40,39 @@ fun Modifier.pressScale(
  */
 @Composable
 fun Modifier.appleClickable(onClick: () -> Unit): Modifier = appleClickable(onClick, null)
+
+/**
+ * Rippleless clickable that leaves the gesture **unconsumed**, so an ancestor's long-press and drag
+ * detector still works over it.
+ *
+ * [appleClickable] cannot be used inside a container that owns a long-press gesture:
+ * `detectTapGestures` consumes the `down`, and a consumed event cancels the ancestor's pending
+ * long-press — which silently killed the app grid's item menu. Here the down is only observed, and
+ * a tap counts only if the finger lifts before the long-press timeout, so a hold or a drag falls
+ * through to the container instead of also firing a click.
+ */
+@Composable
+fun Modifier.nonConsumingClickable(onClick: () -> Unit): Modifier {
+    val interaction = remember { MutableInteractionSource() }
+    return this
+        .pressScale(interaction)
+        .pointerInput(onClick) {
+            val longPressTimeout = viewConfiguration.longPressTimeoutMillis
+            awaitEachGesture {
+                val down = awaitFirstDown(requireUnconsumed = false)
+                val press = PressInteraction.Press(down.position)
+                interaction.tryEmit(press)
+                // Returns null as soon as anything else consumes the gesture (i.e. a drag started).
+                val up = waitForUpOrCancellation()
+                if (up == null) {
+                    interaction.tryEmit(PressInteraction.Cancel(press))
+                    return@awaitEachGesture
+                }
+                interaction.tryEmit(PressInteraction.Release(press))
+                if (up.uptimeMillis - down.uptimeMillis < longPressTimeout) onClick()
+            }
+        }
+}
 
 /**
  * Rippleless clickable with optional long-press. When [onLongPress] is set the long-press

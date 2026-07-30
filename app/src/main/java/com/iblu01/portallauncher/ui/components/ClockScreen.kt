@@ -29,6 +29,8 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
@@ -67,9 +69,6 @@ fun ClockScreen(
     drawBackground: Boolean = true,
     clockTheme: ClockTheme = ClockTheme(),
 ) {
-    val time by rememberClock(if (clockTheme.format24h) "HH:mm" else "h:mm a")
-    val date by rememberClock("EEEE d MMMM")
-
     Box(
         modifier = modifier
             .fillMaxSize()
@@ -93,44 +92,103 @@ fun ClockScreen(
             )
         }
 
-        Column(
-            modifier = Modifier
-                .align(Alignment.TopCenter)
-                .padding(top = 44.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            val timeWeight = FontWeight(clockTheme.weight)
-            Text(
-                text = titleCase(date).uppercase(Locale.getDefault()),
-                style = AppleTypography.titleMedium.copy(
-                    fontFamily = clockFontFamily(clockTheme.font, FontWeight.Medium),
-                    fontWeight = FontWeight.Medium,
-                    fontSize = 20.sp,
-                    letterSpacing = 2.3.sp,
-                ),
-                color = clockTheme.tint.color.copy(alpha = 0.7f)
-            )
-            Spacer(Modifier.height(4.dp))
-            Text(
-                text = time,
-                style = AppleTypography.displayLarge.copy(
-                    fontFamily = clockFontFamily(clockTheme.font, timeWeight),
-                    fontSize = clockTheme.size.sp,
-                    fontWeight = timeWeight,
-                    letterSpacing = clockTheme.letterSpacing.sp,
-                    shadow = Shadow(
-                        color = Color.Black.copy(alpha = 0.35f),
-                        offset = Offset(0f, 2f),
-                        blurRadius = 12f
-                    )
-                ),
-                color = clockTheme.tint.color,
-                maxLines = 1,
-                softWrap = false
-            )
+        ClockHeader(
+            weather = weather,
+            temperatures = temperatures,
+            onWeatherClick = onWeatherClick,
+            connected = connected,
+            lastUpdateAt = lastUpdateAt,
+            clockTheme = clockTheme,
+            modifier = Modifier.align(Alignment.TopCenter),
+        )
+
+        ClockTray(
+            chips = chips,
+            pillsExpanded = pillsExpanded,
+            onPillsExpandedChange = onPillsExpandedChange,
+            onChipClick = onChipClick,
+            onChipLongPress = onChipLongPress,
+            selectedChipKey = selectedChipKey,
+            modifier = Modifier.align(Alignment.BottomCenter),
+        )
+    }
+}
+
+/** Collapsed header height reserved on the apps page, i.e. the clock at [COLLAPSED_SCALE]. */
+val ClockHeaderCollapsedHeight = 92.dp
+
+/** Scale the header shrinks to when the pager is fully on the apps page. */
+private const val COLLAPSED_SCALE = 0.34f
+
+/**
+ * The clock block (date, time, weather pill, stale banner). Pinned above the pager, it shrinks
+ * toward the top as [collapse] goes 0→1 so the apps grid gets the room back.
+ *
+ * The shrink is a pure [graphicsLayer] transform (GPU, no relayout) — the Portal is API 28 with a
+ * weak GPU, so per-frame text remeasuring during a drag would drop frames.
+ */
+@Composable
+fun ClockHeader(
+    weather: WeatherUi,
+    temperatures: TemperatureSummary,
+    onWeatherClick: () -> Unit,
+    connected: Boolean,
+    lastUpdateAt: Long,
+    clockTheme: ClockTheme,
+    modifier: Modifier = Modifier,
+    collapse: Float = 0f,
+) {
+    val time by rememberClock(if (clockTheme.format24h) "HH:mm" else "h:mm a")
+    val date by rememberClock("EEEE d MMMM")
+    // Secondary rows fade out over the first half of the swipe, before the clock is tiny.
+    val secondaryAlpha = (1f - collapse * 2f).coerceIn(0f, 1f)
+
+    Column(
+        modifier = modifier
+            .graphicsLayer {
+                val scale = 1f - (1f - COLLAPSED_SCALE) * collapse
+                transformOrigin = TransformOrigin(0.5f, 0f)
+                scaleX = scale
+                scaleY = scale
+            }
+            .padding(top = 44.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        val timeWeight = FontWeight(clockTheme.weight)
+        Text(
+            text = titleCase(date).uppercase(Locale.getDefault()),
+            style = AppleTypography.titleMedium.copy(
+                fontFamily = clockFontFamily(clockTheme.font, FontWeight.Medium),
+                fontWeight = FontWeight.Medium,
+                fontSize = 20.sp,
+                letterSpacing = 2.3.sp,
+            ),
+            color = clockTheme.tint.color.copy(alpha = 0.7f)
+        )
+        Spacer(Modifier.height(4.dp))
+        Text(
+            text = time,
+            style = AppleTypography.displayLarge.copy(
+                fontFamily = clockFontFamily(clockTheme.font, timeWeight),
+                fontSize = clockTheme.size.sp,
+                fontWeight = timeWeight,
+                letterSpacing = clockTheme.letterSpacing.sp,
+                shadow = Shadow(
+                    color = Color.Black.copy(alpha = 0.35f),
+                    offset = Offset(0f, 2f),
+                    blurRadius = 12f
+                )
+            ),
+            color = clockTheme.tint.color,
+            maxLines = 1,
+            softWrap = false
+        )
+        if (secondaryAlpha > 0f) {
             Spacer(Modifier.height(8.dp))
             Row(
-                modifier = Modifier.clip(AppleShapes.pill)
+                modifier = Modifier
+                    .graphicsLayer { alpha = secondaryAlpha }
+                    .clip(AppleShapes.pill)
                     .background(Color.White.copy(alpha = 0.15f), AppleShapes.pill)
                     .border(0.5.dp, AppleColors.frostedBorder, AppleShapes.pill)
                     .appleClickable(onWeatherClick)
@@ -143,44 +201,57 @@ fun ClockScreen(
             }
             if (!connected && lastUpdateAt > 0L) {
                 Spacer(Modifier.height(8.dp))
-                StaleBanner(lastUpdateAt = lastUpdateAt)
-            }
-        }
-
-        Column(
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .fillMaxWidth()
-                .padding(horizontal = 12.dp)
-                .padding(bottom = 36.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            if (chips.size > 3) {
-                Row(
-                    modifier = Modifier.clip(AppleShapes.pill)
-                        .appleClickable { onPillsExpandedChange(!pillsExpanded) }
-                        .padding(horizontal = 12.dp, vertical = 3.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        if (pillsExpanded) "Masquer les informations" else "Voir plus d’informations",
-                        style = AppleTypography.bodySmall.copy(fontSize = 13.sp),
-                        color = AppleColors.secondary.copy(alpha = 0.62f),
-                    )
-                    Icon(
-                        if (pillsExpanded) Icons.Outlined.KeyboardArrowDown else Icons.Outlined.KeyboardArrowUp,
-                        contentDescription = if (pillsExpanded) "Replier" else "Déplier",
-                        tint = AppleColors.secondary.copy(alpha = 0.62f),
-                    )
+                Box(Modifier.graphicsLayer { alpha = secondaryAlpha }) {
+                    StaleBanner(lastUpdateAt = lastUpdateAt)
                 }
             }
-            val visible = if (pillsExpanded) chips.take(9) else chips.take(3)
-            visible.chunked(3).forEach { rowChips ->
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterHorizontally)) {
-                    rowChips.forEach { chip ->
-                        StatusChip(chip, selected = chip.id == selectedChipKey, onClick = { onChipClick(chip) }, onLongPress = { onChipLongPress(chip) })
-                    }
+        }
+    }
+}
+
+/** The bottom chip tray: the "voir plus" toggle plus up to 3 (collapsed) or 9 (expanded) chips. */
+@Composable
+fun ClockTray(
+    chips: List<LauncherChip>,
+    pillsExpanded: Boolean,
+    onPillsExpandedChange: (Boolean) -> Unit,
+    onChipClick: (LauncherChip) -> Unit,
+    onChipLongPress: (LauncherChip) -> Unit,
+    selectedChipKey: String?,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp)
+            .padding(bottom = 36.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        if (chips.size > 3) {
+            Row(
+                modifier = Modifier.clip(AppleShapes.pill)
+                    .appleClickable { onPillsExpandedChange(!pillsExpanded) }
+                    .padding(horizontal = 12.dp, vertical = 3.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    if (pillsExpanded) "Masquer les informations" else "Voir plus d’informations",
+                    style = AppleTypography.bodySmall.copy(fontSize = 13.sp),
+                    color = AppleColors.secondary.copy(alpha = 0.62f),
+                )
+                Icon(
+                    if (pillsExpanded) Icons.Outlined.KeyboardArrowDown else Icons.Outlined.KeyboardArrowUp,
+                    contentDescription = if (pillsExpanded) "Replier" else "Déplier",
+                    tint = AppleColors.secondary.copy(alpha = 0.62f),
+                )
+            }
+        }
+        val visible = if (pillsExpanded) chips.take(9) else chips.take(3)
+        visible.chunked(3).forEach { rowChips ->
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterHorizontally)) {
+                rowChips.forEach { chip ->
+                    StatusChip(chip, selected = chip.id == selectedChipKey, onClick = { onChipClick(chip) }, onLongPress = { onChipLongPress(chip) })
                 }
             }
         }
