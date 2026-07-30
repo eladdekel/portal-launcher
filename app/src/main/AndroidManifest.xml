@@ -30,10 +30,20 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.PortalLauncher">
 
+        <!--
+            Home-activity attributes, mirroring what AOSP Launcher3 declares:
+            stateNotNeeded  — the home activity can be started before its saved state is restorable
+                              (early boot), and must not be killed for lacking it;
+            taskAffinity="" — keeps launched apps out of the launcher's task;
+            clearTaskOnLaunch — pressing HOME returns to the launcher root, not a stale sub-screen.
+        -->
         <activity
             android:name=".LauncherActivity"
             android:exported="true"
             android:launchMode="singleTask"
+            android:stateNotNeeded="true"
+            android:clearTaskOnLaunch="true"
+            android:taskAffinity=""
             android:screenOrientation="fullSensor">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -44,6 +54,18 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
                 <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- Lets apps pin one of their shortcuts onto the grid; accepted without a window. -->
+        <activity
+            android:name=".PinShortcutActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:theme="@style/Theme.PortalLauncher.Invisible">
+            <intent-filter>
+                <action android:name="android.content.pm.action.CONFIRM_PIN_SHORTCUT" />
+                <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
         </activity>
 

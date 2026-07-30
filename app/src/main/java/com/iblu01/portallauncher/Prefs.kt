@@ -217,6 +217,115 @@ class Prefs(private val context: Context) {
             sp.edit().putString("camera_pairs", arr.toString()).apply()
         }
 
+    // --- Launcher grid (see ui.apps.LauncherLayoutStore) --------------------------------------
+    /**
+     * The app grid's order, as item keys. Dense and ordered (iOS semantics): a drag inserts at an
+     * index and everything after cascades, so there are no holes to persist. Keys absent from the
+     * device are ignored on read; newly installed apps are appended alphabetically.
+     */
+    var appOrder: List<String>
+        get() = decodeStringList(sp.getString("app_order", "[]"))
+        set(value) = sp.edit().putString("app_order", encodeStringList(value)).apply()
+
+    /**
+     * Where each item sits: page + cell. Free placement, so holes are meaningful and nothing is
+     * inferred from an index. [appOrder] is only read once, to seed these from a pre-pages
+     * arrangement.
+     */
+    var appPlacements: List<AppPlacement>
+        get() = runCatching {
+            val arr = org.json.JSONArray(sp.getString("app_placements", "[]") ?: "[]")
+            (0 until arr.length()).mapNotNull { i ->
+                val o = arr.optJSONObject(i) ?: return@mapNotNull null
+                val key = o.optString("k")
+                if (key.isBlank()) null
+                else AppPlacement(
+                    key = key,
+                    page = o.optInt("p"),
+                    col = o.optInt("c"),
+                    row = o.optInt("r"),
+                    // Absent for arrangements written before widgets existed: icons are 1x1.
+                    spanX = o.optInt("w", 1).coerceAtLeast(1),
+                    spanY = o.optInt("h", 1).coerceAtLeast(1),
+                )
+            }
+        }.getOrDefault(emptyList())
+        set(value) {
+            val arr = org.json.JSONArray()
+            value.forEach {
+                arr.put(
+                    org.json.JSONObject()
+                        .put("k", it.key).put("p", it.page).put("c", it.col).put("r", it.row)
+                        .put("w", it.spanX).put("h", it.spanY)
+                )
+            }
+            sp.edit().putString("app_placements", arr.toString()).apply()
+        }
+
+    /** True once [appOrder] has been converted into [appPlacements], so it is never replayed. */
+    var appPlacementsSeeded: Boolean
+        get() = sp.getBoolean("app_placements_seeded", false)
+        set(value) = sp.edit().putBoolean("app_placements_seeded", value).apply()
+
+    /** Item keys hidden from the grid. */
+    var hiddenApps: Set<String>
+        get() = decodeStringList(sp.getString("hidden_apps", "[]")).toSet()
+        set(value) = sp.edit().putString("hidden_apps", encodeStringList(value.toList())).apply()
+
+    /** Item key -> user-chosen label, overriding the one the app declares. */
+    var appLabels: Map<String, String>
+        get() = runCatching {
+            val obj = org.json.JSONObject(sp.getString("app_labels", "{}") ?: "{}")
+            obj.keys().asSequence().mapNotNull { key ->
+                obj.optString(key).takeIf { it.isNotBlank() }?.let { key to it }
+            }.toMap()
+        }.getOrDefault(emptyMap())
+        set(value) {
+            val obj = org.json.JSONObject()
+            value.forEach { (k, v) -> obj.put(k, v) }
+            sp.edit().putString("app_labels", obj.toString()).apply()
+        }
+
+    /** Widget ids allocated from our `AppWidgetHost`, in no particular order. */
+    var widgetIds: List<Int>
+        get() = decodeStringList(sp.getString("widget_ids", "[]")).mapNotNull { it.toIntOrNull() }
+        set(value) = sp.edit().putString("widget_ids", encodeStringList(value.map(Int::toString))).apply()
+
+    /** Shortcuts pinned by apps through `ACTION_CONFIRM_PIN_SHORTCUT`. */
+    var pinnedShortcuts: List<PinnedShortcut>
+        get() = runCatching {
+            val arr = org.json.JSONArray(sp.getString("pinned_shortcuts", "[]") ?: "[]")
+            (0 until arr.length()).mapNotNull { i ->
+                val o = arr.optJSONObject(i) ?: return@mapNotNull null
+                val pkg = o.optString("pkg"); val id = o.optString("id")
+                if (pkg.isBlank() || id.isBlank()) null
+                else PinnedShortcut(pkg, id, o.optString("label"))
+            }
+        }.getOrDefault(emptyList())
+        set(value) {
+            val arr = org.json.JSONArray()
+            value.forEach {
+                arr.put(
+                    org.json.JSONObject()
+                        .put("pkg", it.packageName)
+                        .put("id", it.shortcutId)
+                        .put("label", it.label)
+                )
+            }
+            sp.edit().putString("pinned_shortcuts", arr.toString()).apply()
+        }
+
+    private fun decodeStringList(raw: String?): List<String> = runCatching {
+        val arr = org.json.JSONArray(raw ?: "[]")
+        (0 until arr.length()).mapNotNull { arr.optString(it).takeIf(String::isNotBlank) }
+    }.getOrDefault(emptyList())
+
+    private fun encodeStringList(values: List<String>): String {
+        val arr = org.json.JSONArray()
+        values.forEach { arr.put(it) }
+        return arr.toString()
+    }
+
     val brokerUri: String get() = "tcp://$brokerHost:$brokerPort"
 
     companion object {
@@ -259,6 +368,19 @@ class Prefs(private val context: Context) {
 }
 
 data class CameraPair(val trigger: String, val camera: String)
+
+/** One item's position and size on the launcher grid. Icons are 1x1; widgets span more. */
+data class AppPlacement(
+    val key: String,
+    val page: Int,
+    val col: Int,
+    val row: Int,
+    val spanX: Int = 1,
+    val spanY: Int = 1,
+)
+
+/** A shortcut an app asked the launcher to pin. Its icon lives in `ShortcutIconStore`. */
+data class PinnedShortcut(val packageName: String, val shortcutId: String, val label: String)
 
 enum class PowerMode {
     FOLLOW_PRESENCE,

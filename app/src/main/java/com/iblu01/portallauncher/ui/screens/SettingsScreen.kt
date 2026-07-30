@@ -369,8 +369,14 @@ private fun AppPage(
     Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(20.dp)) {
         SettingsSubPageHeader(title = "Application", onBack = onBack)
 
-        SettingsSection(title = "HOME ASSISTANT") {
-            SettingsRow(label = "Application à ouvrir", value = currentAppLabel.ifBlank { haPackage }, onClick = onShowAppPicker)
+        // Any app, not just Home Assistant: this is the launcher's headline gesture, and HA is
+        // only the default choice.
+        SettingsSection(title = "TAP SUR L'ÉCRAN D'ACCUEIL") {
+            SettingsRow(
+                label = "Application à ouvrir",
+                value = currentAppLabel.ifBlank { haPackage },
+                onClick = onShowAppPicker,
+            )
         }
 
         SettingsSection(title = "FOND D'ÉCRAN") {
