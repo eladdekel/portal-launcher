@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
@@ -5,6 +7,15 @@ plugins {
     alias(libs.plugins.hilt)
     alias(libs.plugins.ksp)
 }
+
+// Release signing lives in local.properties (gitignored) so the keystore and its passwords never
+// touch the repo. Absent for every contributor except whoever cuts a release — release-signed
+// builds fall back to no signingConfig, which still produces a valid (unsigned) build for CI.
+val localProps = Properties().apply {
+    val file = rootProject.file("local.properties")
+    if (file.exists()) file.inputStream().use { load(it) }
+}
+val releaseStoreFile = localProps.getProperty("release.storeFile")
 
 android {
     namespace = "com.iblu01.portallauncher"
@@ -15,13 +26,34 @@ android {
         minSdk = 28
         targetSdk = 28
         versionCode = 1
-        versionName = "0.1.0"
+        versionName = "0.0.1-beta"
+    }
+
+    signingConfigs {
+        if (releaseStoreFile != null) {
+            create("release") {
+                storeFile = file(releaseStoreFile)
+                storePassword = localProps.getProperty("release.storePassword")
+                keyAlias = localProps.getProperty("release.keyAlias")
+                keyPassword = localProps.getProperty("release.keyPassword")
+            }
+        }
     }
 
     buildTypes {
         release {
             isMinifyEnabled = false
+            if (releaseStoreFile != null) {
+                signingConfig = signingConfigs.getByName("release")
+            }
         }
+    }
+
+    lint {
+        // This is a sideload-only project (see README) with no Play Store distribution, so the
+        // Play-specific targetSdk-recency check is a false positive here, not a real defect —
+        // targetSdk 28 is intentional for the wall-panel devices this actually runs on.
+        disable += "ExpiredTargetSdkVersion"
     }
 
     buildFeatures {
