@@ -67,14 +67,6 @@ class Prefs(private val context: Context) {
             return generated
         }
 
-    var tapThreshold: Float
-        get() = sp.getFloat("tap_threshold", 4.0f)
-        set(value) = sp.edit().putFloat("tap_threshold", value.coerceIn(2f, 15f)).apply()
-
-    var tempOffset: Float
-        get() = sp.getFloat("temp_offset", 0f)
-        set(value) = sp.edit().putFloat("temp_offset", value.coerceIn(-20f, 20f)).apply()
-
     var powerMode: PowerMode
         get() = PowerMode.from(sp.getString("power_mode", PowerMode.FOLLOW_PRESENCE.name))
         set(value) = sp.edit().putString("power_mode", value.name).apply()
@@ -124,6 +116,10 @@ class Prefs(private val context: Context) {
         get() = sp.getBoolean("clock_format_24h", true)
         set(value) = sp.edit().putBoolean("clock_format_24h", value).apply()
 
+    var clockElementSpacing: Float
+        get() = sp.getFloat("clock_element_spacing", 1f)
+        set(value) = sp.edit().putFloat("clock_element_spacing", value.coerceIn(0.4f, 2f)).apply()
+
     /** Whole clock styling as one value object, mapping to/from the individual keys above. */
     var clockTheme: ClockTheme
         get() = ClockTheme(
@@ -133,6 +129,7 @@ class Prefs(private val context: Context) {
             letterSpacing = clockLetterSpacing,
             tint = ClockTint.fromKey(clockTint),
             format24h = clockFormat24h,
+            elementSpacing = clockElementSpacing,
         )
         set(value) {
             clockFont = value.font.key
@@ -141,41 +138,14 @@ class Prefs(private val context: Context) {
             clockLetterSpacing = value.letterSpacing
             clockTint = value.tint.key
             clockFormat24h = value.format24h
+            clockElementSpacing = value.elementSpacing
         }
 
-    var adbEnabled: Boolean
-        get() = sp.getBoolean("adb_enabled", false)
-        set(value) = sp.edit().putBoolean("adb_enabled", value).apply()
+    /** Multiplier on the app grid's cell size (icon size), so a smaller device can shrink it. */
+    var gridScale: Float
+        get() = sp.getFloat("grid_scale", 1f)
+        set(value) = sp.edit().putFloat("grid_scale", value.coerceIn(0.7f, 1.3f)).apply()
 
-    var adbPort: Int
-        get() = sp.getInt("adb_port", 5555)
-        set(value) = sp.edit().putInt("adb_port", value).apply()
-
-    var webConfigEnabled: Boolean
-        get() = sp.getBoolean("web_config_enabled", false)
-        set(value) = sp.edit().putBoolean("web_config_enabled", value).apply()
-
-    var webConfigPort: Int
-        get() = sp.getInt("web_config_port", 8080)
-        set(value) = sp.edit().putInt("web_config_port", value.coerceIn(1024, 65535)).apply()
-
-    /** Secret bearer token for the web config server. Auto-generated on first read if empty. */
-    val webConfigToken: String
-        get() {
-            val existing = secure.getString("web_config_token", "") ?: ""
-            if (existing.isNotEmpty()) return existing
-            return regenerateWebConfigToken()
-        }
-
-    fun regenerateWebConfigToken(): String {
-        val bytes = ByteArray(16)
-        java.security.SecureRandom().nextBytes(bytes)
-        val token = android.util.Base64.encodeToString(
-            bytes, android.util.Base64.URL_SAFE or android.util.Base64.NO_WRAP or android.util.Base64.NO_PADDING
-        )
-        secure.edit().putString("web_config_token", token).apply()
-        return token
-    }
 
     var haUrl: String
         get() = sp.getString("ha_url", "http://homeassistant.local:8123") ?: "http://homeassistant.local:8123"
@@ -201,21 +171,7 @@ class Prefs(private val context: Context) {
         get() = sp.getInt("auto_return_delay_seconds", 10)
         set(value) = sp.edit().putInt("auto_return_delay_seconds", value.coerceIn(5, 60)).apply()
 
-    /** Trigger-sensor -> camera pairs: when the sensor turns "on", the camera pops up. */
-    var cameraPairs: List<CameraPair>
-        get() = runCatching {
-            val arr = org.json.JSONArray(sp.getString("camera_pairs", "[]") ?: "[]")
-            (0 until arr.length()).mapNotNull { i ->
-                val o = arr.optJSONObject(i) ?: return@mapNotNull null
-                val t = o.optString("trigger"); val c = o.optString("camera")
-                if (t.isBlank() || c.isBlank()) null else CameraPair(t, c)
-            }
-        }.getOrDefault(emptyList())
-        set(value) {
-            val arr = org.json.JSONArray()
-            value.forEach { arr.put(org.json.JSONObject().put("trigger", it.trigger).put("camera", it.camera)) }
-            sp.edit().putString("camera_pairs", arr.toString()).apply()
-        }
+
 
     // --- Launcher grid (see ui.apps.LauncherLayoutStore) --------------------------------------
     /**
@@ -366,8 +322,6 @@ class Prefs(private val context: Context) {
             }
     }
 }
-
-data class CameraPair(val trigger: String, val camera: String)
 
 /** One item's position and size on the launcher grid. Icons are 1x1; widgets span more. */
 data class AppPlacement(
