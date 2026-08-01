@@ -445,6 +445,7 @@ private fun PortalLauncherApp(
     var bgOverlayOpacity by remember { mutableStateOf(prefs.bgOverlayOpacity) }
     var clockTheme by remember { mutableStateOf(prefs.clockTheme) }
     var gridScale by remember { mutableStateOf(prefs.gridScale) }
+    var pillSize by remember { mutableStateOf(prefs.pillSize) }
     // Bumped on every "backgroundMode" emission (even custom->custom) so CustomWallpaper
     // re-reads the file's lastModified() and Coil busts its stale cache on replacement.
     var wallpaperVersion by remember { mutableStateOf(0) }
@@ -480,6 +481,7 @@ private fun PortalLauncherApp(
                     backgroundMode = prefs.backgroundMode
                     wallpaperVersion++
                 }
+                "pillSize" -> pillSize = prefs.pillSize
                 "haUrl", "haToken" -> pills.start(prefs)
                 "brokerHost", "brokerPort", "username", "password" ->
                     MqttBridgeService.reconnect(context)
@@ -849,7 +851,8 @@ private fun PortalLauncherApp(
                                 onPillsExpandedChange = { pillsExpanded = it },
                                 onChipClick = onChipClick,
                                 onChipLongPress = onChipLongPress,
-                                selectedChipKey = selectedChipKey,
+                    selectedChipKey = selectedChipKey,
+                    pillSize = pillSize,
                                 modifier = Modifier.align(Alignment.BottomCenter),
                             )
                         }

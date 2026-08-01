@@ -319,6 +319,7 @@ fun SettingsScreen(
                 showBack = showBack,
             )
             SettingsPage.PILLS -> PillsSettingsPage(
+                prefs = prefs,
                 uiState = uiState,
                 onRefresh = callbacks::onLoadPillEntities,
                 onSetEnabled = callbacks::onSetPillEnabled,
@@ -881,4 +882,3 @@ private fun DeveloperPage(
         }
     }
 }
-

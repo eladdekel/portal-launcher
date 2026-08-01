@@ -38,6 +38,7 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.iblu01.portallauncher.LauncherChip
+import com.iblu01.portallauncher.PillSize
 import com.iblu01.portallauncher.R
 import com.iblu01.portallauncher.domain.model.TemperatureSummary
 import com.iblu01.portallauncher.ui.theme.AppleColors
@@ -65,6 +66,7 @@ fun ClockScreen(
     onChipClick: (LauncherChip) -> Unit = {},
     onChipLongPress: (LauncherChip) -> Unit = {},
     selectedChipKey: String? = null,
+    pillSize: PillSize = PillSize.NORMAL,
     onWeatherClick: () -> Unit = {},
     connected: Boolean = true,
     lastUpdateAt: Long = 0L,
@@ -112,6 +114,7 @@ fun ClockScreen(
             onChipClick = onChipClick,
             onChipLongPress = onChipLongPress,
             selectedChipKey = selectedChipKey,
+            pillSize = pillSize,
             modifier = Modifier.align(Alignment.BottomCenter),
         )
     }
@@ -221,6 +224,7 @@ fun ClockTray(
     onChipClick: (LauncherChip) -> Unit,
     onChipLongPress: (LauncherChip) -> Unit,
     selectedChipKey: String?,
+    pillSize: PillSize = PillSize.NORMAL,
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -250,11 +254,11 @@ fun ClockTray(
                 )
             }
         }
-        val visible = if (pillsExpanded) chips.take(9) else chips.take(3)
-        visible.chunked(3).forEach { rowChips ->
+        val visible = if (pillsExpanded) chips.take(pillSize.columns * 3) else chips.take(pillSize.columns)
+        visible.chunked(pillSize.columns).forEach { rowChips ->
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp.scaled(), Alignment.CenterHorizontally)) {
                 rowChips.forEach { chip ->
-                    StatusChip(chip, selected = chip.id == selectedChipKey, onClick = { onChipClick(chip) }, onLongPress = { onChipLongPress(chip) })
+                    StatusChip(chip, pillSize, selected = chip.id == selectedChipKey, onClick = { onChipClick(chip) }, onLongPress = { onChipLongPress(chip) })
                 }
             }
         }

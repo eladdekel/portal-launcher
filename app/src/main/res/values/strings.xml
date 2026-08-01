@@ -150,6 +150,9 @@
     <string name="pills_extra_battery">battery</string>
     <string name="pills_extra_cycle">cycle</string>
     <string name="pills_extra_completion">est. finish</string>
+    <string name="pills_section_appearance">APPEARANCE</string>
+    <string name="pill_size_normal">Normal buttons</string>
+    <string name="pill_size_large">Large buttons</string>
     <string name="pill_family_security">Security &amp; access</string>
     <string name="pill_family_comfort">Comfort &amp; air</string>
     <string name="pill_family_appliances">Appliances &amp; energy</string>

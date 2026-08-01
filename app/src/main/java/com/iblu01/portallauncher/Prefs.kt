@@ -224,6 +224,10 @@ class Prefs(private val context: Context) {
         get() = PillRuleCodec.decode(sp.getString("pill_rules", "[]") ?: "[]")
         set(value) = sp.edit().putString("pill_rules", PillRuleCodec.encode(value)).apply()
 
+    var pillSize: PillSize
+        get() = PillSize.from(sp.getString("pill_size", PillSize.NORMAL.name))
+        set(value) = sp.edit().putString("pill_size", value.name).apply()
+
     var pillAutoGroupsInitialized: Boolean
         get() = sp.getBoolean("pill_auto_groups_initialized", false)
         set(value) = sp.edit().putBoolean("pill_auto_groups_initialized", value).apply()
@@ -419,5 +423,14 @@ enum class AppLanguage(val code: String, val flag: String, val nameRes: Int) {
 
     companion object {
         fun from(code: String): AppLanguage = values().firstOrNull { it.code == code } ?: SYSTEM
+    }
+}
+
+enum class PillSize(val scale: Float, val columns: Int, val nameRes: Int) {
+    NORMAL(1f, 3, R.string.pill_size_normal),
+    LARGE(1.45f, 2, R.string.pill_size_large);
+
+    companion object {
+        fun from(value: String?): PillSize = values().firstOrNull { it.name == value } ?: NORMAL
     }
 }

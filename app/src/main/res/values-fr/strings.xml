@@ -149,6 +149,9 @@
     <string name="pills_extra_battery">batterie</string>
     <string name="pills_extra_cycle">cycle</string>
     <string name="pills_extra_completion">fin prévue</string>
+    <string name="pills_section_appearance">APPARENCE</string>
+    <string name="pill_size_normal">Boutons normaux</string>
+    <string name="pill_size_large">Grands boutons</string>
     <string name="pill_family_security">Sécurité &amp; accès</string>
     <string name="pill_family_comfort">Confort &amp; air</string>
     <string name="pill_family_appliances">Appareils &amp; énergie</string>

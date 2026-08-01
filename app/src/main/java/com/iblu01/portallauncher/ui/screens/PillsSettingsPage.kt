@@ -24,7 +24,10 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.iblu01.portallauncher.PillCandidate
 import com.iblu01.portallauncher.PillFamily
+import com.iblu01.portallauncher.PillSize
 import com.iblu01.portallauncher.R
+import com.iblu01.portallauncher.Prefs
+import com.iblu01.portallauncher.SettingsChangeBus
 import com.iblu01.portallauncher.friendlyEntityState
 import com.iblu01.portallauncher.ui.components.PillButton
 import com.iblu01.portallauncher.ui.components.SettingsDivider
@@ -43,6 +46,7 @@ import com.iblu01.portallauncher.ui.theme.AppleTypography
  */
 @Composable
 fun PillsSettingsPage(
+    prefs: Prefs,
     uiState: SettingsUiState,
     onRefresh: () -> Unit,
     onSetEnabled: (List<PillCandidate>, Boolean) -> Unit,
@@ -52,6 +56,7 @@ fun PillsSettingsPage(
     LaunchedEffect(Unit) { onRefresh() }
     var search by remember { mutableStateOf("") }
     var openFamily by remember { mutableStateOf<PillFamily?>(null) }
+    var pillSize by remember { mutableStateOf(prefs.pillSize) }
 
     val enabledIds = uiState.pillRules.filter { it.enabled }.map { it.entityId }.toSet()
 
@@ -73,6 +78,12 @@ fun PillsSettingsPage(
                 onOpenFamily = { openFamily = it },
                 onRefresh = onRefresh,
                 onSetEnabled = onSetEnabled,
+                pillSize = pillSize,
+                onPillSizeChange = {
+                    pillSize = it
+                    prefs.pillSize = it
+                    SettingsChangeBus.get().emit("pillSize")
+                },
                 onBack = onBack,
                 showBack = showBack,
             )
@@ -97,6 +108,8 @@ private fun PillsHomePage(
     onOpenFamily: (PillFamily) -> Unit,
     onRefresh: () -> Unit,
     onSetEnabled: (List<PillCandidate>, Boolean) -> Unit,
+    pillSize: PillSize,
+    onPillSizeChange: (PillSize) -> Unit,
     onBack: () -> Unit,
     showBack: Boolean = true,
 ) {
@@ -116,6 +129,17 @@ private fun PillsHomePage(
             style = AppleTypography.bodyLarge,
             color = AppleColors.secondary
         )
+
+        SettingsSection(title = stringResource(R.string.pills_section_appearance)) {
+            PillSize.values().forEachIndexed { index, size ->
+                SettingsRow(
+                    label = stringResource(size.nameRes),
+                    value = if (size == pillSize) "✓" else "",
+                    onClick = { onPillSizeChange(size) },
+                )
+                if (index != PillSize.values().lastIndex) SettingsDivider()
+            }
+        }
 
         when {
             uiState.pillLoading -> Text(

@@ -61,6 +61,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.iblu01.portallauncher.LauncherChip
+import com.iblu01.portallauncher.PillSize
 import com.iblu01.portallauncher.ui.theme.AppleColors
 import com.iblu01.portallauncher.ui.theme.AppleMotion
 import com.iblu01.portallauncher.ui.theme.AppleShapes
@@ -70,7 +71,7 @@ import com.iblu01.portallauncher.ui.theme.scaled
 import com.iblu01.portallauncher.ui.theme.stateColor
 
 @Composable
-fun StatusChip(chip: LauncherChip, modifier: Modifier = Modifier, selected: Boolean = false, onClick: (() -> Unit)? = null, onLongPress: (() -> Unit)? = null) {
+fun StatusChip(chip: LauncherChip, pillSize: PillSize = PillSize.NORMAL, modifier: Modifier = Modifier, selected: Boolean = false, onClick: (() -> Unit)? = null, onLongPress: (() -> Unit)? = null) {
     val target = stateColor(chip.state)
     val accent by animateColorAsState(target, AppleMotion.spring(), label = "chipAccent")
     val animatedProgress by animateFloatAsState(chip.progress, AppleMotion.spring(), label = "chipProgress")
@@ -85,11 +86,11 @@ fun StatusChip(chip: LauncherChip, modifier: Modifier = Modifier, selected: Bool
             .background(fillColor, AppleShapes.pill)
             .border(if (selected) 1.dp else 0.5.dp, borderColor, AppleShapes.pill)
             .then(if (onClick != null) Modifier.appleClickable(onClick, onLongPress) else Modifier)
-            .padding(start = 12.dp.scaled(), end = 22.dp.scaled(), top = 12.dp.scaled(), bottom = 12.dp.scaled()),
+            .padding(start = (12.dp * pillSize.scale).scaled(), end = (22.dp * pillSize.scale).scaled(), top = (12.dp * pillSize.scale).scaled(), bottom = (12.dp * pillSize.scale).scaled()),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Box(
-            modifier = Modifier.size(46.dp.scaled()),
+            modifier = Modifier.size((46.dp * pillSize.scale).scaled()),
             contentAlignment = Alignment.Center
         ) {
             if (chip.progress > 0f) {
@@ -120,19 +121,19 @@ fun StatusChip(chip: LauncherChip, modifier: Modifier = Modifier, selected: Bool
                         .background(accent.copy(alpha = 0.22f), CircleShape)
                 )
             }
-            ChipGlyph(chip, accent)
+            ChipGlyph(chip, accent, (26.dp * pillSize.scale).scaled())
         }
-        Spacer(Modifier.width(14.dp.scaled()))
+        Spacer(Modifier.width((14.dp * pillSize.scale).scaled()))
         Column {
             Text(
                 chip.label,
-                style = AppleTypography.bodyLarge.copy(fontSize = AppleTypography.bodyLarge.fontSize.scaled()),
+                style = AppleTypography.bodyLarge.copy(fontSize = (AppleTypography.bodyLarge.fontSize * pillSize.scale).scaled()),
                 color = if (selected) selectedSubtitle else AppleColors.secondary,
                 maxLines = 1,
             )
             Text(
                 chip.value,
-                style = AppleTypography.titleLarge.copy(fontSize = AppleTypography.titleLarge.fontSize.scaled()),
+                style = AppleTypography.titleLarge.copy(fontSize = (AppleTypography.titleLarge.fontSize * pillSize.scale).scaled()),
                 color = if (selected) selectedContent else AppleColors.primary,
                 maxLines = 1,
             )
@@ -141,7 +142,7 @@ fun StatusChip(chip: LauncherChip, modifier: Modifier = Modifier, selected: Bool
 }
 
 @Composable
-private fun ChipGlyph(chip: LauncherChip, accent: Color, iconSize: Dp = 26.dp.scaled()) {
+private fun ChipGlyph(chip: LauncherChip, accent: Color, iconSize: Dp) {
     val modifier = Modifier.size(iconSize)
     when (chip.icon) {
         "washer" -> WasherGlyph(chip.value, accent, modifier)
