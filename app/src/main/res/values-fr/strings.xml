@@ -461,6 +461,8 @@
     <string name="toast_app_not_found_label_format">Application introuvable : %1$s</string>
     <string name="toast_cannot_open_app_format">Impossible d\'ouvrir %1$s</string>
     <string name="toast_choose_wallpaper">Choisir un fond d\'écran</string>
+    <string name="toast_image_picker_unavailable">Aucun sélecteur d’images n’est disponible</string>
+    <string name="toast_wallpaper_save_failed">Impossible d’enregistrer le fond d’écran</string>
     <string name="toast_permissions_ok">Permissions OK</string>
     <string name="toast_shortcut_added_format">Raccourci ajouté : %1$s</string>
 

@@ -16,6 +16,7 @@ import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
@@ -144,6 +145,25 @@ class LauncherActivity : ComponentActivity() {
      * appears and coming back lands on the clock instead of where the icon was.
      */
     private var openingFromLauncher = false
+    private val wallpaperPicker = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        uri ?: return@registerForActivityResult
+        lifecycleScope.launch {
+            val saved = withContext(Dispatchers.IO) {
+                runCatching {
+                    contentResolver.openInputStream(uri)?.use { input ->
+                        java.io.File(filesDir, "wallpaper.jpg").outputStream().use { output -> input.copyTo(output) }
+                        true
+                    } ?: false
+                }.getOrDefault(false)
+            }
+            if (saved) {
+                prefs.backgroundMode = "custom"
+                SettingsChangeBus.get().emit("backgroundMode")
+            } else {
+                Toast.makeText(this@LauncherActivity, R.string.toast_wallpaper_save_failed, Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -304,9 +324,15 @@ class LauncherActivity : ComponentActivity() {
     }
 
     private fun setWallpaper() {
-        openFromLauncher(
-            Intent.createChooser(Intent(Intent.ACTION_SET_WALLPAPER), getString(R.string.toast_choose_wallpaper))
-        )
+        val pickerIntent = Intent(Intent.ACTION_OPEN_DOCUMENT)
+            .addCategory(Intent.CATEGORY_OPENABLE)
+            .setType("image/*")
+        if (pickerIntent.resolveActivity(packageManager) == null) {
+            Toast.makeText(this, R.string.toast_image_picker_unavailable, Toast.LENGTH_SHORT).show()
+            return
+        }
+        openingFromLauncher = true
+        wallpaperPicker.launch(arrayOf("image/*"))
     }
 
     /**

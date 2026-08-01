@@ -462,6 +462,8 @@
     <string name="toast_app_not_found_label_format">App not found: %1$s</string>
     <string name="toast_cannot_open_app_format">Could not open %1$s</string>
     <string name="toast_choose_wallpaper">Choose wallpaper</string>
+    <string name="toast_image_picker_unavailable">No image picker is available</string>
+    <string name="toast_wallpaper_save_failed">Could not save wallpaper</string>
     <string name="toast_permissions_ok">Permissions OK</string>
     <string name="toast_shortcut_added_format">Shortcut added: %1$s</string>
 
